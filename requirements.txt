@@ -1,9 +1,6 @@
-# --- Inti (wajib) ---
 streamlit>=1.38.0
 pandas>=2.0.0
 pillow>=10.0.0
-openpyxl>=3.1.0          # diperlukan untuk ekspor Excel (.xlsx)
-
-# --- Opsional (fitur akan otomatis nonaktif jika tidak terpasang) ---
-ultralytics>=8.2.0       # deteksi AI (YOLOv8/v11/v12) - tanpa ini, aplikasi berjalan dalam Mode Manual
-fpdf2>=2.7.0             # ekspor laporan PDF per pemeriksaan - tanpa ini, tombol PDF disembunyikan
+openpyxl>=3.1.0
+ultralytics
+opencv-python-headless
