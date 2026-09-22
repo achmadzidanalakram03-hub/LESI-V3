@@ -1462,20 +1462,75 @@ def migrate_legacy() -> Optional[str]:
 # ============================================================
 # 4. MESIN AI & SINTESIS KLINIS (Diperbarui dengan Gemini API)
 # ============================================================
+def _weight_search_roots() -> list[Path]:
+    """Return predictable locations for deployed/local YOLO weight files."""
+    roots: list[Path] = []
+
+    # Explicit environment variable has highest priority.
+    env_path = os.environ.get("MAMMOUTH_MODEL_PATH") or os.environ.get("YOLO_MODEL_PATH")
+    if env_path:
+        roots.append(Path(env_path).expanduser())
+
+    # Directory containing app.py / this source file. This is important on
+    # Streamlit Cloud because the process working directory can differ.
+    try:
+        roots.append(Path(__file__).resolve().parent)
+    except Exception:
+        pass
+
+    roots.extend([
+        Path.cwd(),
+        DATA_DIR,
+        Path("models"),
+        Path("weights"),
+        Path("model"),
+        Path("MAMMOUTH"),
+    ])
+
+    # De-duplicate while preserving priority.
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve() if root.exists() else root.absolute())
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
 def find_weights(version: str) -> Optional[Path]:
-    for cand in MODEL_FILES.get(version, ["best.pt"]):
-        p = Path(cand)
-        if p.exists():
-            return p
+    """Find YOLO weights without assuming the current working directory."""
+    candidates = MODEL_FILES.get(version, ["best.pt"])
+
+    # Absolute path supplied through env var.
+    env_path = os.environ.get("MAMMOUTH_MODEL_PATH") or os.environ.get("YOLO_MODEL_PATH")
+    if env_path:
+        explicit = Path(env_path).expanduser()
+        if explicit.is_file():
+            return explicit.resolve()
+
+    for root in _weight_search_roots():
+        # If a root itself points to a file, compare its filename.
+        if root.is_file() and root.name in candidates:
+            return root.resolve()
+        for cand in candidates:
+            p = root / cand
+            if p.is_file():
+                return p.resolve()
+
     return None
+
 
 @st.cache_resource(show_spinner=False)
 def load_model(version: str, weight_path: str):
     if YOLO is None or not weight_path:
         return None
     try:
-        return YOLO(weight_path)
-    except Exception:  # noqa: BLE001
+        model = YOLO(weight_path)
+        st.session_state["model_load_error"] = ""
+        return model
+    except Exception as exc:  # noqa: BLE001
+        st.session_state["model_load_error"] = f"{type(exc).__name__}: {exc}"
         return None
 
 def run_inference(model, image: Image.Image, conf: float, iou: float) -> tuple[list[dict], Optional[Image.Image]]:
@@ -3028,13 +3083,24 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
                 ("Google Gemini API", "terhubung" if MODEL_AI else "belum terhubung"),
                 ("Arsitektur aktif", st.session_state.model_version),
-                ("Berkas bobot", weights.name if weights else "tidak ditemukan"),
+                ("Berkas bobot", str(weights) if weights else "tidak ditemukan"),
                 ("Ambang keyakinan", f"{st.session_state.conf_thr:.2f}"),
                 ("Ambang IoU", f"{st.session_state.iou_thr:.2f}"),
             ]
             st.markdown("".join(
                 f"<div class='det-row'><span class='det-sub'>{k}</span><span class='det-name'>{v}</span></div>"
                 for k, v in rows), unsafe_allow_html=True)
+
+            if not weights:
+                st.warning(
+                    "`best.pt` belum ditemukan. Pastikan file bobot benar-benar ikut di-deploy ke repository "
+                    "atau set `MAMMOUTH_MODEL_PATH` ke path file `.pt` yang valid."
+                )
+                roots_txt = "\n".join(f"- `{r}`" for r in _weight_search_roots())
+                with st.expander("Lokasi yang diperiksa MAMMOUTH"):
+                    st.markdown(roots_txt)
+            elif st.session_state.get("model_load_error"):
+                st.error(f"Bobot ditemukan tetapi gagal dimuat: {st.session_state['model_load_error']}")
 
             st.markdown("**Konfigurasi Gemini**")
             gemini_key_present = bool(get_gemini_api_key())
