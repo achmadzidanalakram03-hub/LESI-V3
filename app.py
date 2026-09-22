@@ -1526,15 +1526,42 @@ def find_weights(version: str) -> Optional[Path]:
 
 @st.cache_resource(show_spinner=False)
 def load_model(version: str, weight_path: str):
-    if YOLO is None or not weight_path:
-        return None
+    """Load the deployed checkpoint and return (model, error).
+
+    The error is returned instead of being written to session_state because
+    Streamlit resource caching can skip the function body on later reruns.
+    """
+    if YOLO is None:
+        return None, "Paket ultralytics belum terpasang."
+    if not weight_path:
+        return None, "Path bobot kosong."
     try:
         model = YOLO(weight_path)
-        st.session_state["model_load_error"] = ""
-        return model
+        return model, ""
     except Exception as exc:  # noqa: BLE001
-        st.session_state["model_load_error"] = f"{type(exc).__name__}: {exc}"
-        return None
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def inspect_loaded_model(model, weights: Optional[Path]) -> dict:
+    """Return safe runtime metadata proving whether the checkpoint is loaded."""
+    if model is None:
+        return {"loaded": False, "task": "—", "classes": [], "count": 0, "size_mb": 0.0}
+    try:
+        names = getattr(model, "names", {}) or {}
+        if isinstance(names, dict):
+            classes = [str(v) for _, v in sorted(names.items())]
+        else:
+            classes = [str(v) for v in names]
+        return {
+            "loaded": True,
+            "task": str(getattr(model, "task", "unknown")),
+            "classes": classes,
+            "count": len(classes),
+            "size_mb": round(weights.stat().st_size / 1e6, 2) if weights and weights.is_file() else 0.0,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"loaded": True, "task": "unknown", "classes": [], "count": 0,
+                "size_mb": 0.0, "inspect_error": str(exc)}
 
 def run_inference(model, image: Image.Image, conf: float, iou: float) -> tuple[list[dict], Optional[Image.Image]]:
     results = model(image, conf=conf, iou=iou, verbose=False)
@@ -1681,23 +1708,36 @@ def test_gemini_connection() -> tuple[bool, str]:
     if client is None:
         GEMINI_LAST_STATUS = "Gemini tidak terkonfigurasi."
         return False, GEMINI_SDK_ERROR or "Gemini belum terkonfigurasi."
-    try:
-        response = client.models.generate_content(
-            model=get_gemini_model_name(),
-            contents="Balas hanya dengan: MAMMOUTH_GEMINI_OK",
-            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=20) if genai_types is not None else None,
-        )
-        text = (getattr(response, "text", None) or "").strip()
-        if text:
-            GEMINI_SDK_ERROR = None
-            GEMINI_LAST_STATUS = f"Gemini ONLINE · {get_gemini_model_name()}"
-            return True, text
-        GEMINI_LAST_STATUS = "Gemini merespons tanpa teks."
-        return False, "Gemini merespons tanpa teks."
-    except Exception as exc:  # noqa: BLE001
-        GEMINI_SDK_ERROR = f"{type(exc).__name__}: {exc}"
-        GEMINI_LAST_STATUS = "Gemini OFFLINE / request gagal."
-        return False, GEMINI_SDK_ERROR
+    import time
+
+    last_error = None
+    for attempt, delay in enumerate((0, 2, 5), start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = client.models.generate_content(
+                model=get_gemini_model_name(),
+                contents="Balas hanya dengan: MAMMOUTH_GEMINI_OK",
+                config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=20) if genai_types is not None else None,
+            )
+            text = (getattr(response, "text", None) or "").strip()
+            if text:
+                GEMINI_SDK_ERROR = None
+                GEMINI_LAST_STATUS = f"Gemini ONLINE · {get_gemini_model_name()} · attempt {attempt}"
+                return True, text
+            last_error = "Gemini merespons tanpa teks."
+        except Exception as exc:  # noqa: BLE001
+            last_error = f"{type(exc).__name__}: {exc}"
+            # 503/429/5xx are transient candidates; retry. Other errors return immediately.
+            code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+            msg = str(exc).lower()
+            transient = code in {429, 500, 502, 503, 504} or any(x in msg for x in ("503", "unavailable", "high demand", "429", "rate limit", "timeout"))
+            if not transient:
+                break
+
+    GEMINI_SDK_ERROR = last_error or "Gemini request gagal."
+    GEMINI_LAST_STATUS = "Gemini OFFLINE / request gagal setelah retry."
+    return False, GEMINI_SDK_ERROR
 
 def fallback_synthesize(detections: list[dict], anam: dict) -> str:
     sev = int(anam.get("s_severity", 0) or 0)
@@ -3074,7 +3114,7 @@ def page_encyclopedia() -> None:
 # ============================================================
 # 14. HALAMAN: PENGATURAN
 # ============================================================
-def page_settings(user: dict, weights: Optional[Path]) -> None:
+def page_settings(user: dict, model, weights: Optional[Path]) -> None:
     page_head(_t("Settings"), "Profil, keamanan, model, dan pengelolaan data akun Anda.")
 
     t_prof, t_sec, t_model, t_data, t_about = st.tabs(
@@ -3125,8 +3165,13 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
     with t_model:
         with st.container(border=True):
             st.markdown("### Status runtime")
+            model_info = inspect_loaded_model(model, weights)
             rows = [
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
+                ("YOLO checkpoint", "LOADED / siap inferensi" if model_info["loaded"] else "GAGAL DIMUAT"),
+                ("Task model", model_info.get("task", "—")),
+                ("Jumlah kelas", str(model_info.get("count", 0))),
+                ("Ukuran bobot", f"{model_info.get('size_mb', 0):.2f} MB"),
                 ("Google Gemini API", "SDK + konfigurasi tersedia" if (genai is not None and get_gemini_api_key()) else "belum siap"),
                 ("Arsitektur aktif", st.session_state.model_version),
                 ("Berkas bobot", str(weights) if weights else "tidak ditemukan"),
@@ -3145,8 +3190,14 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                 roots_txt = "\n".join(f"- `{r}`" for r in _weight_search_roots())
                 with st.expander("Lokasi yang diperiksa MAMMOUTH"):
                     st.markdown(roots_txt)
-            elif st.session_state.get("model_load_error"):
-                st.error(f"Bobot ditemukan tetapi gagal dimuat: {st.session_state['model_load_error']}")
+            elif not model_info["loaded"]:
+                st.error(f"`best.pt` ditemukan di server, tetapi checkpoint GAGAL dimuat: {st.session_state.get('model_load_error') or 'error tidak tersedia'}")
+                st.info("Ini berbeda dari masalah file tidak ditemukan. Kemungkinan terkait format checkpoint, versi Ultralytics/PyTorch, atau dependensi runtime.")
+            else:
+                st.success(f"✓ `best.pt` ditemukan dan berhasil dimuat sebagai model {model_info.get('task', 'unknown')} dengan {model_info.get('count', 0)} kelas.")
+                if model_info.get("classes"):
+                    with st.expander("Kelas yang dibaca dari best.pt"):
+                        st.code("\n".join(model_info["classes"]))
 
             st.markdown("**Konfigurasi Gemini**")
             gemini_key_present = bool(get_gemini_api_key())
@@ -3296,7 +3347,8 @@ def main() -> None:
     st.session_state.user = user
 
     weights = find_weights(st.session_state.model_version)
-    model = load_model(st.session_state.model_version, str(weights) if weights else "")
+    model, model_load_error = load_model(st.session_state.model_version, str(weights) if weights else "")
+    st.session_state["model_load_error"] = model_load_error
     render_sidebar(user, weights)
 
     page = st.session_state.page
@@ -3313,7 +3365,7 @@ def main() -> None:
     elif page == "Lesion Database":
         page_encyclopedia()
     elif page == "Settings":
-        page_settings(user, weights)
+        page_settings(user, model, weights)
     else:
         page_dashboard(user)
 
