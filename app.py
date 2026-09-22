@@ -51,11 +51,14 @@ except Exception:  # pragma: no cover
 # atau environment variable GEMINI_API_KEY.
 try:
     from google import genai
+    from google.genai import types as genai_types
 except Exception:  # pragma: no cover - dependency opsional saat mode demo
     genai = None
+    genai_types = None
 
 GEMINI_DEFAULT_MODEL = "gemini-3.8-flash"
 GEMINI_SDK_ERROR = None
+GEMINI_LAST_STATUS = "Belum ada request Gemini."
 
 def _read_secret(name: str, default: str = "") -> str:
     """Baca secret dengan aman dari Streamlit Secrets lalu environment."""
@@ -73,9 +76,8 @@ def get_gemini_api_key() -> str:
 def get_gemini_model_name() -> str:
     return _read_secret("GEMINI_MODEL", GEMINI_DEFAULT_MODEL) or GEMINI_DEFAULT_MODEL
 
-@st.cache_resource(show_spinner=False)
 def get_gemini_client():
-    """Buat client Gemini sekali per runtime Streamlit."""
+    """Buat client Gemini dari secret runtime saat ini. Tidak meng-cache API key."""
     global GEMINI_SDK_ERROR
     if genai is None:
         GEMINI_SDK_ERROR = "Package google-genai belum terpasang. Tambahkan `google-genai` ke requirements.txt."
@@ -93,7 +95,8 @@ def get_gemini_client():
         GEMINI_SDK_ERROR = f"Gagal membuat client Gemini: {exc}"
         return None
 
-MODEL_AI = get_gemini_client()
+# Gemini client dibuat on-demand agar perubahan Streamlit Secrets langsung terbaca.
+MODEL_AI = None
 
 
 # ------------------------------------------------------------
@@ -1572,25 +1575,41 @@ def urgency_of(labels: list[str], severity: int = 0) -> str:
         rank = max(rank, 2)
     return RANK_URGENCY.get(rank, "Rendah") if rank else "Rendah"
 
-def synthesize(detections: list[dict], anam: dict) -> str:
-    """Sintesis klinis berbasis Gemini dengan fallback deterministik.
+def _image_to_gemini_part(image: Optional[Image.Image]):
+    """Konversi citra PIL menjadi Part Gemini tanpa menulis API key atau data pasien ke log."""
+    if image is None or genai_types is None:
+        return None
+    try:
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", quality=88, optimize=True)
+        return genai_types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+    except Exception as exc:  # noqa: BLE001
+        global GEMINI_SDK_ERROR
+        GEMINI_SDK_ERROR = f"Gagal menyiapkan citra untuk Gemini: {type(exc).__name__}: {exc}"
+        return None
 
-    Gemini hanya merangkum/korelasikan hasil deteksi YOLO dan anamnesis;
-    ia tidak menggantikan diagnosis klinis dokter gigi.
+def synthesize(detections: list[dict], anam: dict, image: Optional[Image.Image] = None) -> str:
+    """Sintesis klinis multimodal: citra + hasil YOLO + OLD CARTS melalui Gemini.
+
+    YOLO tetap menjadi detector/bounding-box engine MAMMOTH. Gemini dipakai untuk
+    menginterpretasikan konteks visual secara hati-hati dan menyusun sintesis,
+    bukan untuk menggantikan diagnosis dokter gigi.
     """
+    global GEMINI_SDK_ERROR, GEMINI_LAST_STATUS
     client = get_gemini_client()
     if client is None:
+        GEMINI_LAST_STATUS = "Fallback lokal: Gemini tidak terkonfigurasi."
         return fallback_synthesize(detections, anam)
 
     sev = int(anam.get("s_severity", 0) or 0)
     anam_payload = f"""
-- Onset: {anam.get("o_onset", "-")}
-- Lokasi: {anam.get("l_location", "-")}
-- Durasi: {anam.get("d_duration", "-")}
-- Karakteristik: {anam.get("c_character", "-")}
-- Memperberat: {anam.get("a_aggravating", "-")}
-- Meredakan: {anam.get("r_relieving", "-")}
-- Waktu/pola: {anam.get("t_timing", "-")}
+- Onset: {anam.get('o_onset', '-')}
+- Lokasi: {anam.get('l_location', '-')}
+- Durasi: {anam.get('d_duration', '-')}
+- Karakteristik: {anam.get('c_character', '-')}
+- Memperberat: {anam.get('a_aggravating', '-')}
+- Meredakan: {anam.get('r_relieving', '-')}
+- Waktu/pola: {anam.get('t_timing', '-')}
 - Skala Nyeri (VAS): {sev}/10
 """
 
@@ -1604,54 +1623,81 @@ def synthesize(detections: list[dict], anam: dict) -> str:
         )
 
     prompt = f"""
-Anda adalah MAMMOUTH Clinical AI Assistant, asisten untuk skrining kesehatan rongga mulut.
-Tugas Anda adalah menyusun sintesis klinis singkat berdasarkan HASIL DETEKSI YOLO dan ANAMNESIS yang diberikan.
+Anda adalah MAMMOUTH Clinical AI Assistant untuk dukungan skrining rongga mulut.
+Anda menerima CITRA KLINIS, hasil object detection YOLO, dan anamnesis OLD CARTS.
 
-DATA ANAMNESIS (OLD CARTS):
+TUJUAN:
+Susun sintesis klinis singkat yang membantu dokter gigi menilai temuan, bukan menetapkan diagnosis definitif.
+
+ANAMNESIS OLD CARTS:
 {anam_payload}
 
-HASIL DETEKSI VISUAL DARI YOLO:
+HASIL DETEKSI YOLO:
 {distribusi}
 
-ATURAN WAJIB:
-1. Bedakan dengan jelas antara temuan visual YOLO dan interpretasi klinis.
-2. Jika menyebut suspek diagnosis, gunakan bahasa probabilistik seperti “mengarah ke”, “konsisten dengan”, atau “perlu dipertimbangkan”, bukan diagnosis definitif.
-3. Jangan mengarang temuan yang tidak terdapat pada data.
-4. Jangan menggunakan prevalensi/statistik penyakit atau informasi pasien lain.
-5. Berikan 1–2 paragraf singkat dalam Bahasa Indonesia profesional.
-6. Akhiri dengan kalimat singkat bahwa hasil AI harus dikonfirmasi melalui pemeriksaan klinis langsung oleh dokter gigi.
+ATURAN KLINIS DAN KESELAMATAN:
+1. Citra yang Anda lihat adalah sumber visual tambahan; jangan menganggap citra saja cukup untuk diagnosis.
+2. Perlakukan label dan confidence YOLO sebagai temuan model, bukan kebenaran klinis.
+3. Jangan mengarang riwayat, pemeriksaan, lokasi anatomi, ukuran, warna, tekstur, atau gejala yang tidak dapat didukung data.
+4. Jika visual tidak cukup jelas, katakan bahwa temuan tidak dapat dinilai secara pasti.
+5. Jika menyebut diagnosis banding/suspek, gunakan bahasa probabilistik seperti “mengarah ke”, “konsisten dengan”, atau “perlu dipertimbangkan”.
+6. Jangan memberikan keputusan terapi definitif, terutama tindakan invasif, hanya berdasarkan AI.
+7. Jangan menyebut prevalensi/statistik atau data pasien lain.
+8. Format jawaban: (a) Temuan AI, (b) Korelasi klinis, (c) Hal yang perlu dikonfirmasi dokter gigi.
+9. Maksimal 3 paragraf singkat, Bahasa Indonesia profesional.
+10. Akhiri dengan: “Hasil AI merupakan alat bantu skrining dan harus dikonfirmasi melalui pemeriksaan klinis langsung oleh dokter gigi.”
 """
+
+    image_part = _image_to_gemini_part(image)
+    contents = [prompt]
+    if image_part is not None:
+        contents = [image_part, prompt]
 
     try:
         response = client.models.generate_content(
             model=get_gemini_model_name(),
-            contents=prompt,
+            contents=contents,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=700,
+            ) if genai_types is not None else None,
         )
-        text = getattr(response, "text", None)
-        if text and text.strip():
-            return text.strip().replace("\n", "<br>")
+        text = (getattr(response, "text", None) or "").strip()
+        if text:
+            GEMINI_SDK_ERROR = None
+            GEMINI_LAST_STATUS = f"Gemini aktif · multimodal · {get_gemini_model_name()}"
+            return text.replace("\n", "<br>")
+        GEMINI_LAST_STATUS = "Gemini merespons tanpa teks; fallback lokal digunakan."
         return fallback_synthesize(detections, anam)
     except Exception as exc:  # noqa: BLE001
-        global GEMINI_SDK_ERROR
-        GEMINI_SDK_ERROR = str(exc)
+        GEMINI_SDK_ERROR = f"{type(exc).__name__}: {exc}"
+        GEMINI_LAST_STATUS = "Request Gemini gagal; fallback lokal digunakan."
         return fallback_synthesize(detections, anam)
 
 def test_gemini_connection() -> tuple[bool, str]:
-    """Tes API secara nyata tanpa menampilkan atau mengekspos API key."""
+    """Tes request Gemini nyata tanpa menampilkan API key."""
+    global GEMINI_SDK_ERROR, GEMINI_LAST_STATUS
     client = get_gemini_client()
     if client is None:
+        GEMINI_LAST_STATUS = "Gemini tidak terkonfigurasi."
         return False, GEMINI_SDK_ERROR or "Gemini belum terkonfigurasi."
     try:
         response = client.models.generate_content(
             model=get_gemini_model_name(),
             contents="Balas hanya dengan: MAMMOUTH_GEMINI_OK",
+            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=20) if genai_types is not None else None,
         )
         text = (getattr(response, "text", None) or "").strip()
         if text:
+            GEMINI_SDK_ERROR = None
+            GEMINI_LAST_STATUS = f"Gemini ONLINE · {get_gemini_model_name()}"
             return True, text
+        GEMINI_LAST_STATUS = "Gemini merespons tanpa teks."
         return False, "Gemini merespons tanpa teks."
     except Exception as exc:  # noqa: BLE001
-        return False, str(exc)
+        GEMINI_SDK_ERROR = f"{type(exc).__name__}: {exc}"
+        GEMINI_LAST_STATUS = "Gemini OFFLINE / request gagal."
+        return False, GEMINI_SDK_ERROR
 
 def fallback_synthesize(detections: list[dict], anam: dict) -> str:
     sev = int(anam.get("s_severity", 0) or 0)
@@ -2244,8 +2290,8 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
     if demo:
         st.warning("Mode demo aktif. Kotak deteksi disimulasikan dan ditandai di rekam medis — jangan dipakai klinis.")
 
-    if MODEL_AI is None:
-        st.warning("Google Gemini API Key belum dikonfigurasi. Sintesis klinis akan menggunakan mode statis (Fallback).")
+    if genai is None or not get_gemini_api_key():
+        st.warning("Google Gemini belum siap. Sintesis klinis akan menggunakan fallback lokal sampai `google-genai` dan `GEMINI_API_KEY` tersedia.")
 
     pats = list_patients(user["id"])
     
@@ -2439,7 +2485,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                 "annot_path": store_image(user["id"], exam_id, annotated, "anotasi"),
                 "max_conf": max([d["confidence"] for d in dets], default=0.0),
                 "urgency": urgency_of(labels, int(anam.get("s_severity", 0) or 0)),
-                "synthesis": synthesize(dets, anam),
+                "synthesis": synthesize(dets, anam, img),
                 "clinician_note": note.strip(),
                 "is_demo": 1 if demo else 0,
                 **anam,
@@ -3081,7 +3127,7 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
             st.markdown("### Status runtime")
             rows = [
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
-                ("Google Gemini API", "terhubung" if MODEL_AI else "belum terhubung"),
+                ("Google Gemini API", "SDK + konfigurasi tersedia" if (genai is not None and get_gemini_api_key()) else "belum siap"),
                 ("Arsitektur aktif", st.session_state.model_version),
                 ("Berkas bobot", str(weights) if weights else "tidak ditemukan"),
                 ("Ambang keyakinan", f"{st.session_state.conf_thr:.2f}"),
@@ -3113,6 +3159,10 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                 unsafe_allow_html=True,
             )
             st.caption("Secrets yang didukung: `GEMINI_API_KEY` atau `GOOGLE_API_KEY`. Jangan masukkan key ke GitHub.")
+            st.caption(f"Status request: {GEMINI_LAST_STATUS}")
+            if GEMINI_SDK_ERROR:
+                with st.expander("Detail error Gemini", expanded=False):
+                    st.code(GEMINI_SDK_ERROR)
             if st.button("Tes koneksi Gemini", key="test_gemini", use_container_width=True):
                 with st.spinner("Menghubungi Gemini…"):
                     ok, msg = test_gemini_connection()
@@ -3275,4 +3325,3 @@ def main() -> None:
     )
 
 if __name__ == "__main__":
-    main()
