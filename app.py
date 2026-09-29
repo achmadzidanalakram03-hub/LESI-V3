@@ -1994,7 +1994,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
         bar.empty()
         log_activity(user["id"], "skrining", f"{len(results_view)} citra")
         st.session_state.last_batch = [r["exam"]["id"] for r in results_view]
-        st.toast(f"{len(results_view)} pemeriksaan tersimpan ke rekam medis Anda.", icon="?")
+        st.toast(f"{len(results_view)} pemeriksaan tersimpan ke rekam medis Anda.")
 
         st.markdown("### Hasil")
         for r in results_view:
