@@ -1,0 +1,21 @@
+# Mengabaikan file rahasia Streamlit
+.streamlit/secrets.toml
+
+# Mengabaikan file environment / variabel rahasia lainnya
+.env
+
+# Mengabaikan virtual environment (jika Anda menggunakannya)
+venv/
+.venv/
+env/
+.env_folder/
+
+# Mengabaikan file cache bawaan Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Mengabaikan file sistem operasi (Mac/Windows)
+.DS_Store
+Thumbs.db
