@@ -180,89 +180,55 @@ def groq_chat(messages: list[dict], max_tokens: int = 700) -> tuple[Optional[str
 
 
 def test_groq_connection() -> tuple[bool, str]:
-    """Tes endpoint REST resmi secara langsung, lalu cocokkan model."""
+    """Tes jalur Groq yang benar-benar dipakai aplikasi.
+
+    Jangan memakai GET /models sebagai pemeriksaan koneksi. Endpoint tersebut
+    sebelumnya menghasilkan HTTP 403 di Streamlit Cloud, padahal yang dipakai
+    MAMMOUTH adalah chat completions. Tes ini memakai client Groq yang sama
+    dengan pipeline utama dan tidak mengubah proses upload/YOLO.
+    """
     global GROQ_CALL_OK, GROQ_DIAGNOSTIC
 
-    if not GROQ_API_KEY:
-        message = GROQ_INIT_ERROR or "GROQ_API_KEY tidak ditemukan."
+    if MODEL_AI is None:
+        message = GROQ_INIT_ERROR or "Groq belum siap."
         GROQ_CALL_OK = False
-        GROQ_DIAGNOSTIC = {"status": "API KEY TIDAK ADA", "message": message, "model_available": None}
+        GROQ_DIAGNOSTIC = {
+            "status": "CLIENT TIDAK SIAP",
+            "message": message,
+            "model_available": None,
+        }
         return False, message
 
-    url = f"{GROQ_API_URL}/models"
     try:
-        response = requests.get(
-            url,
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            timeout=30,
+        response = MODEL_AI.chat.completions.create(
+            model=GROQ_MODEL_NAME,
+            messages=[
+                {"role": "user", "content": "Balas hanya: OK"},
+            ],
+            temperature=0,
+            max_tokens=4,
         )
-        body_text = response.text[:1200]
-        _safe_log_groq("models", response.status_code, body_text)
-
-        if response.status_code != 200:
-            detail = body_text.replace(GROQ_API_KEY, "[API_KEY_REDACTED]")
-            message = f"Groq HTTP {response.status_code}: request ditolak oleh endpoint resmi. Detail server: {detail}"
-            GROQ_CALL_OK = False
-            GROQ_DIAGNOSTIC = {
-                "status": f"HTTP {response.status_code}",
-                "message": message,
-                "model_available": None,
-                "endpoint": url,
-            }
-            return False, message
-
-        payload = response.json()
-        ids = {str(item.get("id", "")) for item in payload.get("data", []) if isinstance(item, dict)}
-        model_available = GROQ_MODEL_NAME in ids
-
-        if not model_available:
-            message = (
-                f"API Groq berhasil dihubungi, tetapi model '{GROQ_MODEL_NAME}' "
-                "tidak ada di daftar model API key ini."
-            )
-            GROQ_CALL_OK = False
-            GROQ_DIAGNOSTIC = {
-                "status": "API OK, MODEL TIDAK TERSEDIA",
-                "message": message,
-                "model_available": False,
-                "endpoint": url,
-            }
-            return False, message
+        reply = response.choices[0].message.content if response.choices else ""
+        if not reply:
+            raise RuntimeError("Groq mengembalikan respons kosong.")
 
         GROQ_CALL_OK = True
-        message = f"✓ Groq terhubung. Model '{GROQ_MODEL_NAME}' tersedia."
         GROQ_DIAGNOSTIC = {
             "status": "BERHASIL",
-            "message": message,
+            "message": f"Groq terhubung dan model '{GROQ_MODEL_NAME}' merespons.",
             "model_available": True,
-            "endpoint": url,
         }
-        return True, message
+        return True, f"Groq terhubung. Model '{GROQ_MODEL_NAME}' merespons."
 
-    except requests.RequestException as exc:
-        message = f"Groq connection error: {type(exc).__name__}: {exc}"
-        _safe_log_groq("models", "network_error", message)
-        GROQ_CALL_OK = False
-        GROQ_DIAGNOSTIC = {
-            "status": "NETWORK ERROR",
-            "message": message,
-            "model_available": None,
-            "endpoint": url,
-        }
-        return False, message
     except Exception as exc:
-        message = f"Groq diagnostic error: {type(exc).__name__}: {exc}"
-        _safe_log_groq("models", "exception", message)
+        message = _groq_error_message(exc)
         GROQ_CALL_OK = False
         GROQ_DIAGNOSTIC = {
-            "status": "ERROR",
+            "status": "KONEKSI GAGAL",
             "message": message,
             "model_available": None,
-            "endpoint": url,
         }
+        _safe_log_groq("chat_test", getattr(exc, "status_code", "exception"), message)
         return False, message
 
 
@@ -1398,7 +1364,7 @@ def agent2_sync(agent1_text: str, detections: list[dict]) -> str:
 # ============================================================
 def show_image(img, caption: str = "") -> None:
     try:
-        st.image(img, caption=caption or None, use_container_width=True)
+        st.image(img, caption=caption or None, width="stretch")
     except TypeError:
         st.image(img, caption=caption or None)
 
@@ -1697,7 +1663,7 @@ def render_login() -> None:
                 st.markdown("### Selamat datang kembali")
                 u = st.text_input("Username", placeholder="mis. drg.rina")
                 p = st.text_input("Kata sandi", type="password", placeholder="Kata sandi akun Anda")
-                if st.form_submit_button("Masuk", type="primary", use_container_width=True):
+                if st.form_submit_button("Masuk", type="primary", width="stretch"):
                     if st.session_state.login_fails >= 5:
                         st.error("Terlalu banyak percobaan gagal. Muat ulang halaman untuk mencoba lagi.")
                     else:
@@ -1728,7 +1694,7 @@ def render_login() -> None:
                 nu = st.text_input("Username", placeholder="Huruf, angka, titik, atau garis bawah")
                 np1 = st.text_input("Kata sandi", type="password", placeholder="Minimal 8 karakter, huruf dan angka")
                 np2 = st.text_input("Ulangi kata sandi", type="password")
-                if st.form_submit_button("Buat akun", type="primary", use_container_width=True):
+                if st.form_submit_button("Buat akun", type="primary", width="stretch"):
                     if not all([n.strip(), r.strip(), nu.strip(), np1]):
                         st.warning("Lengkapi nama, peran, username, dan kata sandi.")
                     elif np1 != np2:
@@ -1764,7 +1730,7 @@ def render_sidebar(user: dict, weights: Optional[Path]) -> None:
 
         for key, label in NAV:
             active = st.session_state.page == key
-            if st.button(label, key=f"nav_{key}", use_container_width=True,
+            if st.button(label, key=f"nav_{key}", width="stretch",
                          type="primary" if active else "secondary"):
                 st.session_state.page = key
                 st.rerun()
@@ -1794,12 +1760,12 @@ def render_sidebar(user: dict, weights: Optional[Path]) -> None:
         )
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("Tema", use_container_width=True, help="Ganti antara tampilan terang dan gelap"):
+            if st.button("Tema", width="stretch", help="Ganti antara tampilan terang dan gelap"):
                 st.session_state.theme = "gelap" if st.session_state.theme == "terang" else "terang"
                 set_user_pref(user["id"], theme=st.session_state.theme)
                 st.rerun()
         with c2:
-            if st.button("Keluar", use_container_width=True):
+            if st.button("Keluar", width="stretch"):
                 set_user_pref(user["id"], model_version=st.session_state.model_version,
                               conf_thr=st.session_state.conf_thr, iou_thr=st.session_state.iou_thr)
                 log_activity(user["id"], "logout", "")
@@ -1825,11 +1791,11 @@ def page_overview(user: dict) -> None:
             st.write("Mulai dengan mendaftarkan pasien, lalu unggah citra klinis pertama untuk dianalisis.")
             a, b, _ = st.columns([1, 1, 2])
             with a:
-                if st.button("Daftarkan pasien", type="primary", use_container_width=True):
+                if st.button("Daftarkan pasien", type="primary", width="stretch"):
                     st.session_state.page = "Pasien"
                     st.rerun()
             with b:
-                if st.button("Buka skrining", use_container_width=True):
+                if st.button("Buka skrining", width="stretch"):
                     st.session_state.page = "Skrining"
                     st.rerun()
         return
@@ -1868,7 +1834,7 @@ def page_overview(user: dict) -> None:
                         unsafe_allow_html=True,
                     )
                 with b:
-                    if st.button("Buka", key=f"ov_{row['id']}", use_container_width=True):
+                    if st.button("Buka", key=f"ov_{row['id']}", width="stretch"):
                         st.session_state.open_exam = row["id"]
                         st.session_state.page = "Rekam medis"
                         st.rerun()
@@ -1888,7 +1854,7 @@ def page_overview(user: dict) -> None:
                 )
                 .properties(height=max(180, 32 * len(vc)))
             )
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
         elif not dets.empty:
             st.bar_chart(dets["label"].value_counts())
         else:
@@ -1980,9 +1946,9 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                                          value=float(curv.get("height_cm") or 0.0), step=0.5, format="%.1f")
             vb1, vb2 = st.columns([1, 1])
             with vb1:
-                vsaved = st.form_submit_button("Simpan tanda vital", type="primary", use_container_width=True)
+                vsaved = st.form_submit_button("Simpan tanda vital", type="primary", width="stretch")
             with vb2:
-                vcleared = st.form_submit_button("Kosongkan", use_container_width=True, key="vitals_clear")
+                vcleared = st.form_submit_button("Kosongkan", width="stretch", key="vitals_clear")
             if vsaved:
                 bmi_val = compute_bmi(berat, tinggi)
                 cat, _ = bmi_category(bmi_val, selected_age)
@@ -2036,9 +2002,9 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                 sv = st.slider("Skala nyeri (VAS)", 0, 10, int(cur.get("s_severity", 0)))
             b1, b2 = st.columns([1, 1])
             with b1:
-                saved = st.form_submit_button("Simpan anamnesis", type="primary", use_container_width=True)
+                saved = st.form_submit_button("Simpan anamnesis", type="primary", width="stretch")
             with b2:
-                cleared = st.form_submit_button("Kosongkan", use_container_width=True)
+                cleared = st.form_submit_button("Kosongkan", width="stretch")
             if saved:
                 st.session_state.anamnesis = {
                     "o_onset": o or "-", "l_location": l or "-", "d_duration": d or "-",
@@ -2103,7 +2069,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
     note = st.text_area("Catatan pemeriksa (opsional)", placeholder="Temuan klinis langsung, rencana, atau rujukan.")
 
     run = st.button(f"Jalankan deteksi & AI pada {len(processed)} citra",
-                    type="primary", use_container_width=True)
+                    type="primary", width="stretch")
 
     if run:
         anam = st.session_state.anamnesis
@@ -2221,7 +2187,7 @@ def render_result(user: dict, exam: dict, dets: list[dict], annotated: Image.Ima
             st.download_button(
                 "Unduh laporan", data=build_report_html(full, user["full_name"], user.get("institution") or ""),
                 file_name=f"laporan_{exam['id'][:8]}.html", mime="text/html",
-                key=f"rep_{exam['id']}", use_container_width=True,
+                key=f"rep_{exam['id']}", width="stretch",
             )
 
 
@@ -2278,7 +2244,7 @@ def page_patients(user: dict) -> None:
                     f"terakhir {p['last_exam'] or '—'}</span>", unsafe_allow_html=True,
                 )
             with c3:
-                if st.button("Riwayat", key=f"pat_{p['id']}", use_container_width=True):
+                if st.button("Riwayat", key=f"pat_{p['id']}", width="stretch"):
                     st.session_state.active_patient = None if st.session_state.active_patient == p["id"] else p["id"]
                     st.rerun()
 
@@ -2301,18 +2267,18 @@ def page_patients(user: dict) -> None:
                                 unsafe_allow_html=True,
                             )
                         with h2:
-                            if st.button("Detail", key=f"phist_{e['id']}", use_container_width=True):
+                            if st.button("Detail", key=f"phist_{e['id']}", width="stretch"):
                                 st.session_state.open_exam = e["id"]
                                 st.session_state.page = "Rekam medis"
                                 st.rerun()
 
                 d1, d2, _ = st.columns([1, 1, 2])
                 with d1:
-                    if st.button("Sunting data", key=f"edit_{p['id']}", use_container_width=True):
+                    if st.button("Sunting data", key=f"edit_{p['id']}", width="stretch"):
                         st.session_state[f"editing_{p['id']}"] = not st.session_state.get(f"editing_{p['id']}", False)
                         st.rerun()
                 with d2:
-                    if st.button("Hapus pasien", key=f"del_{p['id']}", use_container_width=True):
+                    if st.button("Hapus pasien", key=f"del_{p['id']}", width="stretch"):
                         st.session_state[f"confirm_del_{p['id']}"] = True
                         st.rerun()
 
@@ -2320,12 +2286,12 @@ def page_patients(user: dict) -> None:
                     st.warning(f"Hapus {p['name']}? Pemeriksaan yang sudah tersimpan tetap ada.")
                     y, n = st.columns(2)
                     with y:
-                        if st.button("Ya, hapus", key=f"yes_{p['id']}", type="primary", use_container_width=True):
+                        if st.button("Ya, hapus", key=f"yes_{p['id']}", type="primary", width="stretch"):
                             delete_patient(user["id"], p["id"])
                             st.session_state[f"confirm_del_{p['id']}"] = False
                             st.rerun()
                     with n:
-                        if st.button("Batal", key=f"no_{p['id']}", use_container_width=True):
+                        if st.button("Batal", key=f"no_{p['id']}", width="stretch"):
                             st.session_state[f"confirm_del_{p['id']}"] = False
                             st.rerun()
 
@@ -2400,7 +2366,7 @@ def page_records(user: dict) -> None:
     table["Keyakinan"] = pd.to_numeric(table["Keyakinan"], errors="coerce").fillna(0)
 
     st.dataframe(
-        table, use_container_width=True, hide_index=True,
+        table, width="stretch", hide_index=True,
         column_config={
             "Keyakinan": st.column_config.ProgressColumn("Keyakinan", min_value=0, max_value=1, format="%.2f"),
             "Nyeri": st.column_config.NumberColumn("Nyeri", format="%d/10"),
@@ -2418,7 +2384,7 @@ def page_records(user: dict) -> None:
         }
         sel = st.selectbox("Pilih", list(labels.keys()), label_visibility="collapsed")
     with o2:
-        if st.button("Tampilkan", type="primary", use_container_width=True):
+        if st.button("Tampilkan", type="primary", width="stretch"):
             st.session_state.open_exam = labels[sel]
             st.rerun()
 
@@ -2428,7 +2394,7 @@ def page_records(user: dict) -> None:
     with e1:
         st.download_button("Unduh CSV", export.to_csv(index=False).encode("utf-8"),
                            file_name=f"mammouth_rekam_{user['username']}.csv", mime="text/csv",
-                           use_container_width=True)
+                           width="stretch")
     with e2:
         try:
             buf = io.BytesIO()
@@ -2437,13 +2403,13 @@ def page_records(user: dict) -> None:
             st.download_button("Unduh Excel", buf.getvalue(),
                                file_name=f"mammouth_rekam_{user['username']}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
+                               width="stretch")
         except Exception:
-            st.button("Excel butuh openpyxl", disabled=True, use_container_width=True)
+            st.button("Excel butuh openpyxl", disabled=True, width="stretch")
     with e3:
         st.download_button("Unduh arsip lengkap (ZIP)", build_export_zip(user["id"]),
                            file_name=f"mammouth_arsip_{user['username']}.zip", mime="application/zip",
-                           use_container_width=True)
+                           width="stretch")
 
 
 def render_exam_detail(user: dict, exam_id: str) -> None:
@@ -2463,7 +2429,7 @@ def render_exam_detail(user: dict, exam_id: str) -> None:
             st.markdown(f"<div style='text-align:right;padding-top:12px'>"
                         f"{pill(exam.get('urgency') or 'Rendah', urgency_tone(exam.get('urgency')))}</div>",
                         unsafe_allow_html=True)
-            if st.button("Tutup", key="close_detail", use_container_width=True):
+            if st.button("Tutup", key="close_detail", width="stretch"):
                 st.session_state.open_exam = None
                 st.rerun()
 
@@ -2557,9 +2523,9 @@ def render_exam_detail(user: dict, exam_id: str) -> None:
         with a1:
             st.download_button("Unduh laporan", build_report_html(exam, user["full_name"], user.get("institution") or ""),
                                file_name=f"laporan_{exam_id[:8]}.html", mime="text/html",
-                               key=f"dl_{exam_id}", use_container_width=True)
+                               key=f"dl_{exam_id}", width="stretch")
         with a2:
-            if st.button("Hapus pemeriksaan", key=f"delx_{exam_id}", use_container_width=True):
+            if st.button("Hapus pemeriksaan", key=f"delx_{exam_id}", width="stretch"):
                 st.session_state[f"confirm_exam_{exam_id}"] = True
                 st.rerun()
 
@@ -2567,13 +2533,13 @@ def render_exam_detail(user: dict, exam_id: str) -> None:
             st.warning("Pemeriksaan dan citranya akan dihapus permanen.")
             y, n = st.columns(2)
             with y:
-                if st.button("Ya, hapus", key=f"yesx_{exam_id}", type="primary", use_container_width=True):
+                if st.button("Ya, hapus", key=f"yesx_{exam_id}", type="primary", width="stretch"):
                     delete_exam(user["id"], exam_id)
                     st.session_state[f"confirm_exam_{exam_id}"] = False
                     st.session_state.open_exam = None
                     st.rerun()
             with n:
-                if st.button("Batal", key=f"nox_{exam_id}", use_container_width=True):
+                if st.button("Batal", key=f"nox_{exam_id}", width="stretch"):
                     st.session_state[f"confirm_exam_{exam_id}"] = False
                     st.rerun()
 
@@ -2631,7 +2597,7 @@ def page_analytics(user: dict) -> None:
                     y=alt.Y("Kelas:N", sort="-x", title=None),
                     color=alt.value(primary), tooltip=["Kelas", "Jumlah"],
                 ).properties(height=max(200, 34 * len(vc))),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.bar_chart(dets["label"].value_counts())
@@ -2646,10 +2612,10 @@ def page_analytics(user: dict) -> None:
                     x=alt.X("confidence:Q", title="Keyakinan", scale=alt.Scale(domain=[0, 1])),
                     y=alt.Y("label:N", title=None),
                 ).properties(height=max(200, 34 * dets["label"].nunique())),
-                use_container_width=True,
+                width="stretch",
             )
         else:
-            st.dataframe(dets.groupby("label")["confidence"].describe(), use_container_width=True)
+            st.dataframe(dets.groupby("label")["confidence"].describe(), width="stretch")
 
 
 # ============================================================
@@ -2745,7 +2711,7 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                 "apakah deployment Streamlit dapat mengakses Groq dan apakah model yang dipilih tersedia."
             )
 
-            if st.button("Tes koneksi Groq", key="test_groq_connection", use_container_width=True, type="primary"):
+            if st.button("Tes koneksi Groq", key="test_groq_connection", width="stretch", type="primary"):
                 with st.spinner("Memeriksa akses Groq…"):
                     ok, msg = test_groq_connection()
                 if ok:
