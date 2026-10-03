@@ -58,9 +58,9 @@ try:
 
     # Konfigurasi model Groq sesuai permintaan Anda
     GROQ_MODEL_NAME = str(
-        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
+        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"))
     ).strip() if hasattr(st, "secrets") else str(
-        os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+        os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
     ).strip()
 
     MODEL_AI = Groq(api_key=api_key) if api_key else None
