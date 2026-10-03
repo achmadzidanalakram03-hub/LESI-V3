@@ -58,10 +58,7 @@ try:
 
     # Model default Groq
 GROQ_MODEL_NAME = str(
-    st.secrets.get(
-        "GROQ_MODEL",
-        os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-    )
+    st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"))
 ).strip() if hasattr(st, "secrets") else str(
     os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 ).strip()
