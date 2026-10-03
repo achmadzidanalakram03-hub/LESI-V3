@@ -73,7 +73,19 @@ def _read_secret(name: str, default: str = "") -> str:
 
 GROQ_API_KEY = _read_secret("GROQ_API_KEY")
 GROQ_MODEL_NAME = _read_secret("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
-GROQ_BASE_URL = _read_secret("GROQ_BASE_URL", "https://api.groq.com") or "https://api.groq.com"
+# Groq SDK memakai endpoint OpenAI-compatible di /openai/v1.
+# Jangan gunakan https://api.groq.com langsung sebagai base_url karena
+# request SDK akan diarahkan ke path yang salah. Jika Secret lama masih
+# berisi https://api.groq.com, kita normalkan otomatis.
+_raw_groq_base = _read_secret("GROQ_BASE_URL", "")
+if not _raw_groq_base:
+    GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+else:
+    GROQ_BASE_URL = _raw_groq_base.rstrip("/")
+    if GROQ_BASE_URL == "https://api.groq.com":
+        GROQ_BASE_URL += "/openai/v1"
+    elif GROQ_BASE_URL.endswith("/openai"):
+        GROQ_BASE_URL += "/v1"
 
 MODEL_AI = None
 GROQ_INIT_ERROR = ""
@@ -89,8 +101,9 @@ if Groq is not None and GROQ_API_KEY:
     try:
         MODEL_AI = Groq(
             api_key=GROQ_API_KEY,
-            base_url=GROQ_BASE_URL.rstrip("/"),
-            timeout=30.0,
+            # Endpoint resmi Groq OpenAI-compatible API.
+            base_url=GROQ_BASE_URL,
+            timeout=60.0,
             max_retries=1,
         )
     except Exception as exc:
@@ -206,6 +219,7 @@ def test_groq_connection() -> tuple[bool, str]:
             "status": "KONEKSI GAGAL",
             "message": message,
             "model_available": None,
+            "base_url": GROQ_BASE_URL,
         }
         return False, message
 
