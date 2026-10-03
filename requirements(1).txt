@@ -7,3 +7,4 @@ altair>=5.0
 ultralytics>=8.3
 google-genai>=1.0
 opencv-python-headless
+groq
