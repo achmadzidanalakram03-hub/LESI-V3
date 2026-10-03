@@ -24,6 +24,8 @@ import io
 import json
 import os
 import random
+import logging
+import requests
 import secrets
 import sqlite3
 import uuid
@@ -49,15 +51,18 @@ except Exception:  # pragma: no cover
 # ============================================================
 # GROQ AI — KONFIGURASI ROBUST + DIAGNOSTIK
 # ============================================================
-# Catatan: 403 bukan berarti nama model salah. Groq mendokumentasikan
-# 403 sebagai Forbidden/permission restriction. Karena itu kita tidak
-# mengganti model secara otomatis ketika 403; kita tampilkan penyebabnya.
+# PENTING:
+# Untuk Groq Python SDK, JANGAN mengisi base_url secara manual.
+# Groq SDK sudah memakai endpoint API resminya sendiri
+# (https://api.groq.com/openai/v1/...).
+# Mengisi base_url ke /openai/v1 secara manual dapat membuat path
+# endpoint menjadi tidak sesuai dengan cara kerja SDK.
 try:
     from groq import Groq
-    from groq import APIStatusError, APIConnectionError, APITimeoutError
+    from groq import APIConnectionError, APITimeoutError
 except Exception:
     Groq = None
-    APIStatusError = APIConnectionError = APITimeoutError = Exception
+    APIConnectionError = APITimeoutError = Exception
 
 
 def _read_secret(name: str, default: str = "") -> str:
@@ -73,19 +78,8 @@ def _read_secret(name: str, default: str = "") -> str:
 
 GROQ_API_KEY = _read_secret("GROQ_API_KEY")
 GROQ_MODEL_NAME = _read_secret("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
-# Groq SDK memakai endpoint OpenAI-compatible di /openai/v1.
-# Jangan gunakan https://api.groq.com langsung sebagai base_url karena
-# request SDK akan diarahkan ke path yang salah. Jika Secret lama masih
-# berisi https://api.groq.com, kita normalkan otomatis.
-_raw_groq_base = _read_secret("GROQ_BASE_URL", "")
-if not _raw_groq_base:
-    GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-else:
-    GROQ_BASE_URL = _raw_groq_base.rstrip("/")
-    if GROQ_BASE_URL == "https://api.groq.com":
-        GROQ_BASE_URL += "/openai/v1"
-    elif GROQ_BASE_URL.endswith("/openai"):
-        GROQ_BASE_URL += "/v1"
+# URL REST resmi hanya dipakai untuk diagnostic HTTP langsung.
+GROQ_API_URL = "https://api.groq.com/openai/v1"
 
 MODEL_AI = None
 GROQ_INIT_ERROR = ""
@@ -99,10 +93,9 @@ GROQ_DIAGNOSTIC = {
 
 if Groq is not None and GROQ_API_KEY:
     try:
+        # Jangan pass base_url: Groq SDK sudah menangani endpoint resminya.
         MODEL_AI = Groq(
             api_key=GROQ_API_KEY,
-            # Endpoint resmi Groq OpenAI-compatible API.
-            base_url=GROQ_BASE_URL,
             timeout=60.0,
             max_retries=1,
         )
@@ -115,13 +108,14 @@ elif not GROQ_API_KEY:
 
 
 def _groq_error_message(exc: Exception) -> str:
-    """Ubah exception Groq menjadi pesan yang berguna tanpa membocorkan API key."""
+    """Pesan error aman tanpa membocorkan API key."""
     status = getattr(exc, "status_code", None)
-    body = getattr(exc, "response", None)
+    response = getattr(exc, "response", None)
     detail = ""
     try:
-        if body is not None:
-            detail = str(body.text)[:700]
+        if response is not None:
+            # httpx.Response.text tidak mengandung API key dari request header.
+            detail = response.text[:1000]
     except Exception:
         pass
     raw = str(exc).strip() or type(exc).__name__
@@ -130,24 +124,34 @@ def _groq_error_message(exc: Exception) -> str:
         return "Groq HTTP 401: API key tidak valid/tidak terbaca. Periksa GROQ_API_KEY di Streamlit Secrets."
     if status == 403:
         return (
-            "Groq HTTP 403 (Forbidden): request ditolak karena permission/access restriction. "
-            "Nama model bukan penyebab yang boleh diasumsikan dari status 403. "
-            "Periksa status/izin API key dan akses jaringan dari deployment Streamlit Cloud."
+            "Groq HTTP 403 (Forbidden): server Groq menolak request dari aplikasi. "
+            "Model bukan penyebab yang boleh diasumsikan dari status 403. "
             + (f" Detail server: {detail}" if detail else "")
         )
     if status == 404:
-        return f"Groq HTTP 404: model/endpoint tidak ditemukan. Model saat ini: {GROQ_MODEL_NAME}."
+        return f"Groq HTTP 404: endpoint/model tidak ditemukan. Model: {GROQ_MODEL_NAME}."
     if status == 429:
         return "Groq HTTP 429: rate limit tercapai. Tunggu sebentar lalu coba lagi."
     if isinstance(exc, APITimeoutError):
-        return "Groq timeout: server tidak merespons dalam 30 detik."
+        return "Groq timeout: server tidak merespons dalam batas waktu."
     if isinstance(exc, APIConnectionError):
         return "Groq connection error: Streamlit Cloud tidak berhasil mencapai api.groq.com."
     return f"Groq error ({type(exc).__name__}): {raw}"
 
 
+def _safe_log_groq(label: str, status: object, detail: str = "") -> None:
+    """Tulis diagnostic ke Cloud Logs tanpa API key."""
+    safe = str(detail).replace(GROQ_API_KEY, "[API_KEY_REDACTED]") if GROQ_API_KEY else str(detail)
+    logging.getLogger("mammouth.groq").warning(
+        "GROQ_DIAGNOSTIC label=%s status=%s detail=%s",
+        label,
+        status,
+        safe[:1200],
+    )
+
+
 def groq_chat(messages: list[dict], max_tokens: int = 700) -> tuple[Optional[str], Optional[str]]:
-    """Satu pintu untuk semua pemanggilan Groq. Tidak melempar exception ke UI."""
+    """Satu pintu untuk semua pemanggilan Groq."""
     global GROQ_LAST_ERROR, GROQ_CALL_OK
     if MODEL_AI is None:
         GROQ_LAST_ERROR = GROQ_INIT_ERROR or "Groq belum terhubung."
@@ -171,55 +175,93 @@ def groq_chat(messages: list[dict], max_tokens: int = 700) -> tuple[Optional[str
     except Exception as exc:
         GROQ_LAST_ERROR = _groq_error_message(exc)
         GROQ_CALL_OK = False
+        _safe_log_groq("chat", getattr(exc, "status_code", "exception"), GROQ_LAST_ERROR)
         return None, GROQ_LAST_ERROR
 
 
 def test_groq_connection() -> tuple[bool, str]:
-    """Tes akses API Groq dan ketersediaan model. Tidak menjalankan completion."""
+    """Tes endpoint REST resmi secara langsung, lalu cocokkan model."""
     global GROQ_CALL_OK, GROQ_DIAGNOSTIC
 
-    if MODEL_AI is None:
+    if not GROQ_API_KEY:
+        message = GROQ_INIT_ERROR or "GROQ_API_KEY tidak ditemukan."
         GROQ_CALL_OK = False
-        GROQ_DIAGNOSTIC = {
-            "status": "CLIENT GAGAL",
-            "message": GROQ_INIT_ERROR or "Groq belum terhubung.",
-            "model_available": None,
-        }
-        return False, GROQ_DIAGNOSTIC["message"]
+        GROQ_DIAGNOSTIC = {"status": "API KEY TIDAK ADA", "message": message, "model_available": None}
+        return False, message
 
+    url = f"{GROQ_API_URL}/models"
     try:
-        models = MODEL_AI.models.list()
-        ids = {getattr(m, "id", "") for m in getattr(models, "data", [])}
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        body_text = response.text[:1200]
+        _safe_log_groq("models", response.status_code, body_text)
+
+        if response.status_code != 200:
+            detail = body_text.replace(GROQ_API_KEY, "[API_KEY_REDACTED]")
+            message = f"Groq HTTP {response.status_code}: request ditolak oleh endpoint resmi. Detail server: {detail}"
+            GROQ_CALL_OK = False
+            GROQ_DIAGNOSTIC = {
+                "status": f"HTTP {response.status_code}",
+                "message": message,
+                "model_available": None,
+                "endpoint": url,
+            }
+            return False, message
+
+        payload = response.json()
+        ids = {str(item.get("id", "")) for item in payload.get("data", []) if isinstance(item, dict)}
         model_available = GROQ_MODEL_NAME in ids
 
         if not model_available:
+            message = (
+                f"API Groq berhasil dihubungi, tetapi model '{GROQ_MODEL_NAME}' "
+                "tidak ada di daftar model API key ini."
+            )
             GROQ_CALL_OK = False
             GROQ_DIAGNOSTIC = {
                 "status": "API OK, MODEL TIDAK TERSEDIA",
-                "message": (
-                    f"Groq dapat dihubungi, tetapi model '{GROQ_MODEL_NAME}' "
-                    "tidak muncul pada daftar model yang tersedia untuk API key ini."
-                ),
+                "message": message,
                 "model_available": False,
+                "endpoint": url,
             }
-            return False, GROQ_DIAGNOSTIC["message"]
+            return False, message
 
         GROQ_CALL_OK = True
+        message = f"✓ Groq terhubung. Model '{GROQ_MODEL_NAME}' tersedia."
         GROQ_DIAGNOSTIC = {
             "status": "BERHASIL",
-            "message": f"Groq dapat dihubungi dan model '{GROQ_MODEL_NAME}' tersedia.",
+            "message": message,
             "model_available": True,
+            "endpoint": url,
         }
-        return True, GROQ_DIAGNOSTIC["message"]
+        return True, message
 
-    except Exception as exc:
+    except requests.RequestException as exc:
+        message = f"Groq connection error: {type(exc).__name__}: {exc}"
+        _safe_log_groq("models", "network_error", message)
         GROQ_CALL_OK = False
-        message = _groq_error_message(exc)
         GROQ_DIAGNOSTIC = {
-            "status": "KONEKSI GAGAL",
+            "status": "NETWORK ERROR",
             "message": message,
             "model_available": None,
-            "base_url": GROQ_BASE_URL,
+            "endpoint": url,
+        }
+        return False, message
+    except Exception as exc:
+        message = f"Groq diagnostic error: {type(exc).__name__}: {exc}"
+        _safe_log_groq("models", "exception", message)
+        GROQ_CALL_OK = False
+        GROQ_DIAGNOSTIC = {
+            "status": "ERROR",
+            "message": message,
+            "model_available": None,
+            "endpoint": url,
         }
         return False, message
 
