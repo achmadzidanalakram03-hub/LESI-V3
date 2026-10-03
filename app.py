@@ -56,12 +56,12 @@ try:
     elif "GROQ_API_KEY" in os.environ:
         api_key = os.environ["GROQ_API_KEY"].strip()
 
-    # Model default Groq
-GROQ_MODEL_NAME = str(
-    st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"))
-).strip() if hasattr(st, "secrets") else str(
-    os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-).strip()
+    # Konfigurasi model Groq sesuai permintaan Anda
+    GROQ_MODEL_NAME = str(
+        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
+    ).strip() if hasattr(st, "secrets") else str(
+        os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    ).strip()
 
     MODEL_AI = Groq(api_key=api_key) if api_key else None
 except Exception:
@@ -73,9 +73,6 @@ except Exception:
 # ------------------------------------------------------------
 # 0. KOMPATIBILITAS API STREAMLIT
 # ------------------------------------------------------------
-# Streamlit >=1.50 mengganti `use_container_width` dengan `width`. Shim ini
-# menerjemahkan argumen lama ke argumen baru saat aplikasi dijalankan, sehingga
-# berkas yang sama tetap jalan di versi lama maupun versi terbaru.
 def _install_compat_shim() -> None:
     import inspect
 
@@ -89,7 +86,7 @@ def _install_compat_shim() -> None:
         except (TypeError, ValueError):
             continue
         if "use_container_width" in params:
-            continue  # versi lama, argumen asli masih diterima
+            continue
         has_width = "width" in params
 
         def wrapper(*args, _fn=fn, _has_width=has_width, **kwargs):
@@ -117,7 +114,7 @@ AI_PIPELINE_VERSION = "0.1-baseline"
 DATA_DIR = Path(os.environ.get("MAMMOUTH_DATA_DIR", "mammouth_data"))
 DB_FILE = DATA_DIR / "mammouth.db"
 IMG_DIR = DATA_DIR / "images"
-LEGACY_DB = Path("mammouth.db")  # basis data versi lama (v5) bila ada
+LEGACY_DB = Path("mammouth.db")
 
 MODEL_FILES = {
     "YOLOv8": ["best.pt", "yolov8_best.pt"],
@@ -299,12 +296,10 @@ h3 { font-size: 1.15rem !important; font-weight: 600 !important; margin: 1.7rem 
 p, li, label, span, div { color: var(--text); }
 a { color: var(--primary); }
 
-/* --- Judul halaman --- */
 .page-head { margin-bottom: 2rem; }
 .page-head h1 { margin: 0 0 .4rem 0; }
 .page-head p { color: var(--muted); margin: 0; font-size: .95rem; max-width: 70ch; line-height: 1.55; }
 
-/* --- Kontainer berbingkai bawaan Streamlit --- */
 [data-testid="stVerticalBlockBorderWrapper"] {
     background: var(--surface);
     border-radius: 14px;
@@ -314,10 +309,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
     border-color: var(--border) !important;
 }
 
-/* --- Kolom berdampingan --- */
 [data-testid="stHorizontalBlock"] { gap: 1.4rem; align-items: flex-start; }
 
-/* --- Kartu --- */
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -340,7 +333,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 }
 .kpi .sub { color: var(--muted); font-size: .78rem; margin: 6px 0 0 0; }
 
-/* --- Pita urgensi pada hasil --- */
 .verdict {
     border: 1px solid var(--border);
     border-left: 5px solid var(--primary);
@@ -355,7 +347,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 .verdict.u-sedang { border-left-color: var(--warn); }
 .verdict.u-rendah { border-left-color: var(--ok); }
 
-/* --- Lencana --- */
 .pill {
     display: inline-block; padding: 4px 12px; border-radius: 999px;
     font-size: .72rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
@@ -365,7 +356,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 .pill.high { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
 .pill.neutral { background: var(--surface2); color: var(--muted); border-color: var(--border); }
 
-/* --- Baris deteksi --- */
 .det-row {
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     padding: 13px 2px; border-bottom: 1px solid var(--border);
@@ -376,7 +366,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 .meter { height: 6px; border-radius: 99px; background: var(--surface2); width: 120px; overflow: hidden; }
 .meter > span { display: block; height: 100%; background: var(--primary); }
 
-/* --- Kartu ringkas tanda vital --- */
 .vital-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
     gap: 14px; margin: 4px 0 4px 0;
@@ -391,7 +380,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
     margin: 6px 0 0 0; font-variant-numeric: tabular-nums;
 }
 
-/* --- Sidebar --- */
 [data-testid="stSidebar"] { background: var(--surface) !important; border-right: 1px solid var(--border); }
 [data-testid="stSidebar"] .block-container { padding-top: 1.8rem; }
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 1.1rem; }
@@ -409,7 +397,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 .who .name { font-weight: 600; font-size: .9rem; margin: 0; }
 .who .role { color: var(--muted); font-size: .76rem; margin: 3px 0 0 0; }
 
-/* --- Tombol --- */
 .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
     border-radius: 10px !important;
     font-weight: 600 !important;
@@ -429,7 +416,6 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVert
 .stButton > button[kind="primary"]:hover { filter: brightness(1.08); color: var(--on-primary) !important; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--primary) !important; outline-offset: 2px; }
 
-/* --- Input --- */
 input, textarea, [data-baseweb="select"] > div {
     border-radius: 10px !important;
     background: var(--surface) !important;
@@ -439,13 +425,11 @@ input, textarea, [data-baseweb="select"] > div {
 [data-testid="stWidgetLabel"] p { font-size: .84rem; font-weight: 600; color: var(--text); margin-bottom: .2rem; }
 [data-testid="stForm"] [data-testid="stVerticalBlock"] { gap: 1rem; }
 
-/* --- Tab --- */
 .stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid var(--border); }
 .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0 0; padding: 10px 20px; font-weight: 600; font-size: .9rem; }
 .stTabs [aria-selected="true"] { color: var(--primary) !important; background: var(--primary-soft) !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 1.1rem; }
 
-/* --- Ekspander, tabel, metrik --- */
 [data-testid="stExpander"] {
     border: 1px solid var(--border) !important; border-radius: 12px !important; background: var(--surface);
     margin-bottom: .2rem;
@@ -455,7 +439,6 @@ input, textarea, [data-baseweb="select"] > div {
 hr { border-color: var(--border); margin: 1.6rem 0; }
 [data-testid="stCameraInput"] button { border-radius: 10px !important; }
 
-/* --- Halaman masuk --- */
 .auth-hero { padding: 6px 0 0 0; }
 .auth-hero .mark {
     font-family: 'Space Grotesk', sans-serif; font-size: 3.4rem; font-weight: 700;
@@ -583,7 +566,6 @@ CREATE INDEX IF NOT EXISTS ix_det_user ON detections(user_id, label);
 CREATE INDEX IF NOT EXISTS ix_pat_user ON patients(user_id, name);
 """
 
-
 EXAM_VITAL_COLUMNS = {
     "bp_systolic": "INTEGER", "bp_diastolic": "INTEGER", "pulse_rate": "INTEGER",
     "resp_rate": "INTEGER", "weight_kg": "REAL", "height_cm": "REAL", "bmi": "REAL",
@@ -593,7 +575,6 @@ EXAM_VITAL_COLUMNS = {
 
 
 def _ensure_exam_vital_columns(conn: sqlite3.Connection) -> None:
-    """Menambahkan kolom tanda vital pada basis data lama (dibuat sebelum v6.1)."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(exams)")}
     for col, sqltype in EXAM_VITAL_COLUMNS.items():
         if col not in existing:
@@ -691,9 +672,9 @@ def verify_login(username: str, password: str) -> Optional[sqlite3.Row]:
         return None
 
     ok = False
-    if row["iterations"] == 0:  # akun warisan v5 (SHA-256 polos)
+    if row["iterations"] == 0:
         ok = hmac.compare_digest(row["pw_hash"], hashlib.sha256(password.encode()).hexdigest())
-        if ok:  # naikkan ke PBKDF2 saat login berhasil
+        if ok:
             new_hash, new_salt, iters = hash_password(password)
             conn.execute(
                 "UPDATE users SET pw_hash=?, pw_salt=?, iterations=? WHERE id=?",
@@ -956,9 +937,7 @@ def delete_account(user_id: str) -> None:
     conn.close()
 
 
-# ---------- Migrasi dari basis data v5 ----------
 def migrate_legacy() -> Optional[str]:
-    """Memindahkan tabel users/emr_logs versi lama ke skema baru. Dijalankan sekali."""
     if meta_get("legacy_migrated") == "1" or not LEGACY_DB.exists() or LEGACY_DB.resolve() == DB_FILE.resolve():
         return None
     try:
@@ -1029,7 +1008,7 @@ def migrate_legacy() -> Optional[str]:
 
 
 # ============================================================
-# 4. MESIN AI & SINTESIS KLINIS (Diperbarui dengan Groq API)
+# 4. MESIN AI & SINTESIS KLINIS (Groq AI Dual-Agent)
 # ============================================================
 def find_weights(version: str) -> Optional[Path]:
     for cand in MODEL_FILES.get(version, ["best.pt"]):
@@ -1052,7 +1031,7 @@ def load_model(version: str, weight_path: str):
 def run_inference(model, image: Image.Image, conf: float, iou: float) -> tuple[list[dict], Optional[Image.Image]]:
     results = model(image, conf=conf, iou=iou, verbose=False)
     res = results[0]
-    plotted = res.plot()  # BGR numpy
+    plotted = res.plot()
     annotated = Image.fromarray(plotted[:, :, ::-1])
     dets = []
     for b in res.boxes:
@@ -1067,7 +1046,6 @@ def run_inference(model, image: Image.Image, conf: float, iou: float) -> tuple[l
 
 
 def run_demo_inference(image: Image.Image, conf: float) -> tuple[list[dict], Image.Image]:
-    """Deteksi tiruan untuk menjelajah aplikasi tanpa bobot model. Bukan hasil AI."""
     rng = random.Random(hash(image.tobytes()[:2048]) & 0xFFFF)
     n = rng.choice([0, 1, 1, 2, 2, 3])
     w, h = image.size
@@ -1093,7 +1071,6 @@ def urgency_of(labels: list[str], severity: int = 0) -> str:
 
 
 def fallback_synthesize(detections: list[dict], anam: dict) -> str:
-    """Logika sintesis statis warisan (dipakai sebagai cadangan jika API AI gagal)."""
     sev = int(anam.get("s_severity", 0) or 0)
     char = str(anam.get("c_character", "")).lower()
     onset = str(anam.get("o_onset", "")).lower()
@@ -1144,6 +1121,7 @@ def fallback_synthesize(detections: list[dict], anam: dict) -> str:
 
     return " ".join(f"{i}. {t}" for i, t in enumerate(lines, 1))
 
+
 def agent1_anamnesis(anam: dict) -> str:
     """Kecerdasan 1: Mensintesis suspek diagnosis murni dari data Anamnesis (OLD CARTS)."""
     if MODEL_AI is None:
@@ -1181,6 +1159,7 @@ def agent1_anamnesis(anam: dict) -> str:
         return response.choices[0].message.content or "Gagal merumuskan suspek."
     except Exception as e:
         return f"Error Kecerdasan 1: {str(e)}"
+
 
 def agent2_sync(agent1_text: str, detections: list[dict]) -> str:
     """Kecerdasan 2: Mensinkronisasi suspek dari Kecerdasan 1 dengan deteksi visual YOLO."""
@@ -1289,11 +1268,6 @@ def urgency_tone(u: Optional[str]) -> str:
 
 
 def compute_bmi(weight_kg: Optional[float], height_cm: Optional[float]) -> Optional[float]:
-    """Menghitung IMT = berat badan (kg) / tinggi badan (m)^2.
-
-    Fungsi hanya menghitung nilai matematis IMT. Interpretasi kategori dipisahkan
-    agar MAMMOUTH tidak menerapkan cut-off dewasa kepada pasien <18 tahun.
-    """
     try:
         w, h = float(weight_kg or 0), float(height_cm or 0)
     except (TypeError, ValueError):
@@ -1304,12 +1278,6 @@ def compute_bmi(weight_kg: Optional[float], height_cm: Optional[float]) -> Optio
 
 
 def bmi_category(bmi: Optional[float], age_years: Optional[int] = None) -> tuple[str, str]:
-    """Interpretasi IMT dewasa berbasis Asia-Pasifik.
-
-    Untuk usia <18 tahun, nilai IMT tetap dihitung tetapi tidak diklasifikasikan
-    dengan cut-off dewasa; interpretasi klinis memerlukan BMI-for-age menurut
-    usia dan jenis kelamin.
-    """
     if bmi is None:
         return "—", "neutral"
     if age_years is not None and age_years < 18:
@@ -1488,7 +1456,6 @@ st.markdown(theme_css(st.session_state.theme), unsafe_allow_html=True)
 
 
 def tooth_svg() -> str:
-    """Grafik gigi sederhana untuk halaman masuk — satu aksen visual, tanpa animasi."""
     return """
 <svg viewBox="0 0 320 200" width="100%" height="190" role="img" aria-label="Ilustrasi gigi dan titik pemindaian" class="tooth-plot">
   <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
@@ -1582,9 +1549,6 @@ def render_login() -> None:
                         (st.success if ok else st.error)(msg)
                         if ok:
                             st.info("Buka tab Masuk untuk mulai bekerja.")
-
-        st.caption("Kata sandi disimpan sebagai turunan PBKDF2-SHA256 bersalt. "
-                   "Data klinis tersimpan lokal di server tempat aplikasi ini dijalankan.")
 
 
 # ============================================================
@@ -1839,7 +1803,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                     "weight_kg": float(berat) or None, "height_cm": float(tinggi) or None,
                     "bmi": bmi_val, "bmi_category": cat,
                 }
-                st.success("Tanda-tanda vital tersimpan dan akan disertakan pada rekam pemeriksaan.")
+                st.success("Tanda-tanda vital tersimpan.")
             if vcleared:
                 st.session_state.vitals = {}
                 st.rerun()
@@ -1892,7 +1856,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                     "c_character": ch or "-", "a_aggravating": ag or "-", "r_relieving": rl or "-",
                     "t_timing": tm or "-", "s_severity": sv,
                 }
-                st.success("Anamnesis tersimpan dan akan dipakai untuk sintesis temuan (via AI/Rules).")
+                st.success("Anamnesis tersimpan.")
             if cleared:
                 st.session_state.anamnesis = {}
                 st.rerun()
@@ -1914,7 +1878,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
             try:
                 raw.append(Image.open(f).convert("RGB"))
                 names.append(f.name)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 st.error(f"Berkas {f.name} tidak bisa dibaca sebagai gambar.")
 
     with tab_cam:
@@ -1923,7 +1887,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
             try:
                 raw.append(Image.open(shot).convert("RGB"))
                 names.append(f"kamera_{datetime.now():%Y%m%d_%H%M%S}.jpg")
-            except Exception:  # noqa: BLE001
+            except Exception:
                 st.error("Gambar kamera gagal dibaca.")
 
     if not raw:
@@ -1939,7 +1903,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
     with e3:
         sharp = st.slider("Ketajaman", 0.5, 2.5, 1.0, 0.05)
     with e4:
-        auto = st.toggle("Auto-kontras", value=False, help="Meratakan histogram sebelum penyesuaian manual")
+        auto = st.toggle("Auto-kontras", value=False)
 
     processed = [enhance(img, bright, contrast, sharp, auto) for img in raw]
     cols = st.columns(min(len(processed), 4))
@@ -1968,7 +1932,7 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                     dets, annotated = run_demo_inference(img, st.session_state.conf_thr)
                 else:
                     dets, annotated = run_inference(model, img, st.session_state.conf_thr, st.session_state.iou_thr)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 st.error(f"{fname} gagal diproses: {exc}")
                 continue
 
@@ -1990,13 +1954,13 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                 "annot_path": store_image(user["id"], exam_id, annotated, "anotasi"),
                 "max_conf": max([d["confidence"] for d in dets], default=0.0),
                 "urgency": urgency_of(labels, int(anam.get("s_severity", 0) or 0)),
-                "synthesis": hasil_agen2,  # <-- Tampilan akhir ke pengguna diisi oleh Kecerdasan 2
+                "synthesis": hasil_agen2,
                 "ai_provider": "groq" if MODEL_AI else "fallback",
                 "ai_model": GROQ_MODEL_NAME if MODEL_AI else "",
                 "ai_pipeline_version": AI_PIPELINE_VERSION,
                 "knowledge_version": KNOWLEDGE_VERSION,
-                "agent1_json": hasil_agen1,  # <-- Menyimpan rekam pemikiran Kecerdasan 1 secara permanen ke Database
-                "agent2_json": hasil_agen2,  # <-- Menyimpan hasil sinkronisasi Kecerdasan 2 secara permanen ke Database
+                "agent1_json": hasil_agen1,
+                "agent2_json": hasil_agen2,
                 "clinician_note": note.strip(),
                 "is_demo": 1 if demo else 0,
                 **anam,
@@ -2074,7 +2038,7 @@ def render_result(user: dict, exam: dict, dets: list[dict], annotated: Image.Ima
 # 10. HALAMAN: PASIEN
 # ============================================================
 def page_patients(user: dict) -> None:
-    page_head("Pasien", "Daftar pasien beserta riwayat pemeriksaannya. Hanya akun ini yang dapat melihatnya.")
+    page_head("Pasien", "Daftar pasien beserta riwayat pemeriksaannya.")
 
     with st.expander("Tambah pasien", expanded=False):
         with st.form("form_pasien", clear_on_submit=True):
@@ -2162,8 +2126,7 @@ def page_patients(user: dict) -> None:
                         st.rerun()
 
                 if st.session_state.get(f"confirm_del_{p['id']}"):
-                    st.warning(f"Hapus {p['name']}? Pemeriksaan yang sudah tersimpan tetap ada, "
-                               "tetapi kehilangan kaitan ke pasien ini.")
+                    st.warning(f"Hapus {p['name']}? Pemeriksaan yang sudah tersimpan tetap ada.")
                     y, n = st.columns(2)
                     with y:
                         if st.button("Ya, hapus", key=f"yes_{p['id']}", type="primary", use_container_width=True):
@@ -2236,7 +2199,7 @@ def page_records(user: dict) -> None:
 
     st.caption(f"{len(view)} dari {len(exams)} pemeriksaan ditampilkan.")
     if view.empty:
-        st.warning("Tidak ada pemeriksaan yang cocok dengan filter. Longgarkan kriterianya.")
+        st.warning("Tidak ada pemeriksaan yang cocok dengan filter.")
         return
 
     table = view[["exam_date", "patient_name", "patient_code", "labels", "max_conf",
@@ -2284,7 +2247,7 @@ def page_records(user: dict) -> None:
                                file_name=f"mammouth_rekam_{user['username']}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
-        except Exception:  # noqa: BLE001
+        except Exception:
             st.button("Excel butuh openpyxl", disabled=True, use_container_width=True)
     with e3:
         st.download_button("Unduh arsip lengkap (ZIP)", build_export_zip(user["id"]),
@@ -2444,7 +2407,7 @@ def page_analytics(user: dict) -> None:
         exams = exams[exams["is_demo"] == 0]
         dets = dets[dets["is_demo"] == 0]
         if exams.empty:
-            st.info("Semua data pada akun ini berasal dari mode demo. Matikan filter untuk melihatnya.")
+            st.info("Semua data pada akun ini berasal dari mode demo.")
             return
 
     c1, c2, c3, c4 = st.columns(4)
@@ -2497,56 +2460,6 @@ def page_analytics(user: dict) -> None:
         else:
             st.dataframe(dets.groupby("label")["confidence"].describe(), use_container_width=True)
 
-    g3, g4 = st.columns(2, gap="large")
-    with g3:
-        st.markdown("### Aktivitas harian")
-        daily = exams.groupby("exam_date").size().reset_index(name="Pemeriksaan")
-        if alt is not None and not daily.empty:
-            st.altair_chart(
-                alt.Chart(daily).mark_area(line={"color": primary}, opacity=0.25, color=primary).encode(
-                    x=alt.X("exam_date:T", title=None),
-                    y=alt.Y("Pemeriksaan:Q", title=None),
-                    tooltip=["exam_date", "Pemeriksaan"],
-                ).properties(height=240),
-                use_container_width=True,
-            )
-        else:
-            st.line_chart(daily.set_index("exam_date"))
-
-    with g4:
-        st.markdown("### Sebaran skala nyeri")
-        sev = pd.to_numeric(exams["s_severity"], errors="coerce").fillna(0).astype(int)
-        hist = sev.value_counts().sort_index().reset_index()
-        hist.columns = ["VAS", "Jumlah"]
-        if alt is not None:
-            st.altair_chart(
-                alt.Chart(hist).mark_bar(cornerRadius=3, color=accent).encode(
-                    x=alt.X("VAS:O", title="Skala nyeri"), y=alt.Y("Jumlah:Q", title=None),
-                    tooltip=["VAS", "Jumlah"],
-                ).properties(height=240),
-                use_container_width=True,
-            )
-        else:
-            st.bar_chart(hist.set_index("VAS"))
-
-    st.markdown("### Prioritas tindak lanjut per kelas")
-    if not dets.empty:
-        tab = dets.groupby("label").agg(
-            Deteksi=("id", "count"),
-            Keyakinan_rata=("confidence", "mean"),
-            Nyeri_rata=("s_severity", "mean"),
-        ).reset_index().rename(columns={"label": "Kelas"})
-        tab["Prioritas"] = tab["Kelas"].map(lambda k: LESION_INFO.get(k.lower(), {}).get("urgensi", "Rendah"))
-        tab = tab.sort_values("Deteksi", ascending=False)
-        st.dataframe(
-            tab, use_container_width=True, hide_index=True,
-            column_config={
-                "Keyakinan_rata": st.column_config.ProgressColumn("Keyakinan rata-rata", min_value=0, max_value=1,
-                                                                  format="%.2f"),
-                "Nyeri_rata": st.column_config.NumberColumn("Nyeri rata-rata", format="%.1f"),
-            },
-        )
-
 
 # ============================================================
 # 13. HALAMAN: ENSIKLOPEDIA
@@ -2571,7 +2484,7 @@ def page_encyclopedia() -> None:
         items.append((key, info))
 
     if not items:
-        st.warning("Tidak ada lesi yang cocok. Coba kata kunci lain.")
+        st.warning("Tidak ada lesi yang cocok.")
         return
 
     for i in range(0, len(items), 2):
@@ -2612,14 +2525,12 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                     rl = st.text_input("Peran", user.get("role") or "")
                 with c2:
                     inst = st.text_input("Institusi atau klinik", user.get("institution") or "")
-                    st.text_input("Username", user["username"], disabled=True,
-                                  help="Username tidak dapat diubah")
+                    st.text_input("Username", user["username"], disabled=True)
                 if st.form_submit_button("Simpan profil", type="primary"):
                     update_profile(user["id"], fn, rl, inst)
                     st.session_state.user = dict(get_user(user["id"]))
                     st.success("Profil diperbarui.")
                     st.rerun()
-        st.caption(f"Akun dibuat {user['created_at'][:10]} · terakhir masuk {(user.get('last_login') or '—')[:16]}")
 
     with t_sec:
         with st.container(border=True):
@@ -2634,15 +2545,6 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                     else:
                         ok, msg = change_password(user["id"], old, n1)
                         (st.success if ok else st.error)(msg)
-        with st.container(border=True):
-            st.markdown("### Bagaimana data Anda dipisahkan")
-            st.write(
-                "Setiap baris pasien, pemeriksaan, dan deteksi membawa penanda akun pemiliknya, dan setiap "
-                "kueri aplikasi menyaring berdasarkan penanda itu. Citra disimpan di folder terpisah per akun. "
-                "Akun lain di server yang sama tidak bisa membuka data Anda dari dalam aplikasi."
-            )
-            st.caption("Catatan: siapa pun yang punya akses langsung ke berkas server tetap bisa membaca basis data. "
-                       "Untuk pemakaian klinis nyata, aktifkan enkripsi disk dan HTTPS.")
 
     with t_model:
         with st.container(border=True):
@@ -2660,26 +2562,12 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
                 f"<div class='det-row'><span class='det-sub'>{k}</span><span class='det-name'>{v}</span></div>"
                 for k, v in rows), unsafe_allow_html=True)
 
-            st.markdown("**Nama berkas yang dicari untuk tiap arsitektur**")
-            for v, files in MODEL_FILES.items():
-                st.caption(f"{v}: " + ", ".join(f"`{f}`" for f in files))
-
         with st.container(border=True):
             st.markdown("### Mode demo")
-            st.write("Menjalankan alur kerja lengkap dengan deteksi tiruan ketika bobot model belum tersedia. "
-                     "Pemeriksaan yang dihasilkan diberi tanda demo dan bisa disembunyikan dari analitik.")
             demo = st.toggle("Aktifkan mode demo", value=st.session_state.demo_mode)
             if demo != st.session_state.demo_mode:
                 st.session_state.demo_mode = demo
                 st.rerun()
-
-        with st.container(border=True):
-            st.markdown("### Simpan sebagai bawaan")
-            st.write("Arsitektur dan kedua ambang di sidebar akan dipakai ulang setiap kali Anda masuk.")
-            if st.button("Jadikan pengaturan saat ini sebagai bawaan", type="primary"):
-                set_user_pref(user["id"], model_version=st.session_state.model_version,
-                              conf_thr=st.session_state.conf_thr, iou_thr=st.session_state.iou_thr)
-                st.success("Tersimpan.")
 
     with t_data:
         exams = load_exams(user["id"])
@@ -2697,74 +2585,17 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
 
         with st.container(border=True):
             st.markdown("### Ekspor")
-            st.write("Arsip ZIP berisi tiga berkas CSV (pasien, pemeriksaan, deteksi) beserta seluruh citra Anda.")
             inc = st.toggle("Sertakan citra", value=True)
             st.download_button("Unduh arsip akun", build_export_zip(user["id"], inc),
                                file_name=f"mammouth_arsip_{user['username']}.zip",
                                mime="application/zip", type="primary")
 
-        with st.container(border=True):
-            st.markdown("### Hapus data")
-            st.write("Tindakan berikut permanen dan hanya memengaruhi akun Anda.")
-            d1, d2 = st.columns(2)
-            with d1:
-                if st.button("Kosongkan semua data klinis", use_container_width=True):
-                    st.session_state["confirm_wipe"] = True
-                    st.rerun()
-            with d2:
-                if st.button("Hapus akun ini", use_container_width=True):
-                    st.session_state["confirm_account"] = True
-                    st.rerun()
-
-            if st.session_state.get("confirm_wipe"):
-                st.warning("Seluruh pasien, pemeriksaan, dan citra akan hilang. Akun tetap aktif.")
-                word = st.text_input("Ketik HAPUS untuk mengonfirmasi", key="wipe_word")
-                if st.button("Jalankan penghapusan", type="primary", disabled=word != "HAPUS"):
-                    wipe_user_data(user["id"])
-                    st.session_state["confirm_wipe"] = False
-                    st.success("Data klinis dikosongkan.")
-                    st.rerun()
-
-            if st.session_state.get("confirm_account"):
-                st.error("Akun beserta seluruh isinya akan dihapus dan Anda langsung keluar.")
-                word2 = st.text_input("Ketik nama pengguna Anda untuk mengonfirmasi", key="acc_word")
-                if st.button("Hapus akun permanen", type="primary", disabled=word2 != user["username"]):
-                    delete_account(user["id"])
-                    for k, v in DEFAULTS.items():
-                        st.session_state[k] = v
-                    st.rerun()
-
-        if user.get("is_admin"):
-            with st.container(border=True):
-                st.markdown("### Administrasi server")
-                st.caption("Administrator melihat daftar akun dan volume datanya, bukan isi rekam medisnya.")
-                conn = get_conn()
-                admin_df = pd.read_sql(
-                    """SELECT u.username AS Username, u.full_name AS Nama, u.role AS Peran,
-                              u.created_at AS Dibuat, u.last_login AS "Terakhir masuk",
-                              (SELECT COUNT(*) FROM exams e WHERE e.user_id=u.id) AS Pemeriksaan,
-                              (SELECT COUNT(*) FROM patients p WHERE p.user_id=u.id) AS Pasien
-                       FROM users u ORDER BY u.created_at""", conn)
-                conn.close()
-                st.dataframe(admin_df, use_container_width=True, hide_index=True)
-
     with t_about:
         with st.container(border=True):
             st.markdown(f"### {APP_NAME} v{APP_VERSION}")
             st.write(
-                "Proyek independen untuk skrining lesi rongga mulut berbasis computer vision. "
-                "Aplikasi ini adalah alat bantu penapisan, bukan pengganti pemeriksaan klinis. "
-                "Diagnosis akhir selalu ditegakkan oleh dokter gigi melalui pemeriksaan langsung, "
-                "bila perlu dengan radiograf dan biopsi."
+                "Proyek independen untuk skrining lesi rongga mulut berbasis computer vision dan Groq AI."
             )
-            st.markdown(
-                "- Antarmuka: Streamlit\n"
-                "- Deteksi objek: Ultralytics YOLO (v8/v11/v12)\n"
-                "- Sintesis Klinis: Groq AI (Dual Agent)\n"
-                "- Penyimpanan: SQLite relasional dan arsip citra per akun\n"
-                "- Keamanan kata sandi: PBKDF2-HMAC-SHA256, 200.000 iterasi, salt per akun"
-            )
-            st.caption(f"Folder data: `{DATA_DIR.resolve()}`")
 
 
 # ============================================================
@@ -2777,7 +2608,7 @@ def main() -> None:
 
     user = st.session_state.user
     fresh = get_user(user["id"])
-    if fresh is None:  # akun terhapus dari sesi lain
+    if fresh is None:
         for k, v in DEFAULTS.items():
             st.session_state[k] = v
         st.rerun()
@@ -2808,8 +2639,7 @@ def main() -> None:
 
     st.markdown(
         f"<hr><p style='font-size:.78rem;color:var(--muted);text-align:center'>"
-        f"{APP_NAME} v{APP_VERSION} · alat bantu skrining, bukan alat diagnosis. "
-        f"Konfirmasi setiap temuan dengan pemeriksaan klinis langsung.</p>",
+        f"{APP_NAME} v{APP_VERSION} · alat bantu skrining, bukan alat diagnosis.</p>",
         unsafe_allow_html=True,
     )
 
