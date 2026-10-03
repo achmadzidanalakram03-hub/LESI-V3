@@ -46,28 +46,132 @@ try:
 except Exception:  # pragma: no cover
     YOLO = None
 
-# Menggunakan SDK Groq
+# ============================================================
+# GROQ AI — KONFIGURASI ROBUST + DIAGNOSTIK
+# ============================================================
+# Catatan: 403 bukan berarti nama model salah. Groq mendokumentasikan
+# 403 sebagai Forbidden/permission restriction. Karena itu kita tidak
+# mengganti model secara otomatis ketika 403; kita tampilkan penyebabnya.
 try:
     from groq import Groq
-
-    api_key = None
-    if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-        api_key = str(st.secrets["GROQ_API_KEY"]).strip()
-    elif "GROQ_API_KEY" in os.environ:
-        api_key = os.environ["GROQ_API_KEY"].strip()
-
-    # Konfigurasi model Groq sesuai permintaan Anda
-    GROQ_MODEL_NAME = str(
-        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"))
-    ).strip() if hasattr(st, "secrets") else str(
-        os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-    ).strip()
-
-    MODEL_AI = Groq(api_key=api_key) if api_key else None
+    from groq import APIStatusError, APIConnectionError, APITimeoutError
 except Exception:
     Groq = None
-    MODEL_AI = None
-    GROQ_MODEL_NAME = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    APIStatusError = APIConnectionError = APITimeoutError = Exception
+
+
+def _read_secret(name: str, default: str = "") -> str:
+    """Baca Streamlit Secrets lalu fallback ke environment variable."""
+    try:
+        value = st.secrets.get(name, None)
+        if value is not None:
+            return str(value).strip()
+    except Exception:
+        pass
+    return str(os.environ.get(name, default) or "").strip()
+
+
+GROQ_API_KEY = _read_secret("GROQ_API_KEY")
+GROQ_MODEL_NAME = _read_secret("GROQ_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b"
+GROQ_BASE_URL = _read_secret("GROQ_BASE_URL", "https://api.groq.com") or "https://api.groq.com"
+
+MODEL_AI = None
+GROQ_INIT_ERROR = ""
+GROQ_LAST_ERROR = ""
+GROQ_CALL_OK = False
+
+if Groq is not None and GROQ_API_KEY:
+    try:
+        MODEL_AI = Groq(
+            api_key=GROQ_API_KEY,
+            base_url=GROQ_BASE_URL.rstrip("/"),
+            timeout=30.0,
+            max_retries=1,
+        )
+    except Exception as exc:
+        GROQ_INIT_ERROR = f"{type(exc).__name__}: {exc}"
+elif Groq is None:
+    GROQ_INIT_ERROR = "Paket groq belum terpasang. Tambahkan 'groq' ke requirements.txt."
+elif not GROQ_API_KEY:
+    GROQ_INIT_ERROR = "GROQ_API_KEY tidak ditemukan di Streamlit Secrets/environment."
+
+
+def _groq_error_message(exc: Exception) -> str:
+    """Ubah exception Groq menjadi pesan yang berguna tanpa membocorkan API key."""
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "response", None)
+    detail = ""
+    try:
+        if body is not None:
+            detail = str(body.text)[:700]
+    except Exception:
+        pass
+    raw = str(exc).strip() or type(exc).__name__
+
+    if status == 401:
+        return "Groq HTTP 401: API key tidak valid/tidak terbaca. Periksa GROQ_API_KEY di Streamlit Secrets."
+    if status == 403:
+        return (
+            "Groq HTTP 403 (Forbidden): request ditolak karena permission/access restriction. "
+            "Nama model bukan penyebab yang boleh diasumsikan dari status 403. "
+            "Periksa status/izin API key dan akses jaringan dari deployment Streamlit Cloud."
+            + (f" Detail server: {detail}" if detail else "")
+        )
+    if status == 404:
+        return f"Groq HTTP 404: model/endpoint tidak ditemukan. Model saat ini: {GROQ_MODEL_NAME}."
+    if status == 429:
+        return "Groq HTTP 429: rate limit tercapai. Tunggu sebentar lalu coba lagi."
+    if isinstance(exc, APITimeoutError):
+        return "Groq timeout: server tidak merespons dalam 30 detik."
+    if isinstance(exc, APIConnectionError):
+        return "Groq connection error: Streamlit Cloud tidak berhasil mencapai api.groq.com."
+    return f"Groq error ({type(exc).__name__}): {raw}"
+
+
+def groq_chat(messages: list[dict], max_tokens: int = 700) -> tuple[Optional[str], Optional[str]]:
+    """Satu pintu untuk semua pemanggilan Groq. Tidak melempar exception ke UI."""
+    global GROQ_LAST_ERROR, GROQ_CALL_OK
+    if MODEL_AI is None:
+        GROQ_LAST_ERROR = GROQ_INIT_ERROR or "Groq belum terhubung."
+        GROQ_CALL_OK = False
+        return None, GROQ_LAST_ERROR
+    try:
+        response = MODEL_AI.chat.completions.create(
+            model=GROQ_MODEL_NAME,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=max_tokens,
+        )
+        text = response.choices[0].message.content if response.choices else None
+        if not text:
+            GROQ_LAST_ERROR = "Groq mengembalikan respons kosong."
+            GROQ_CALL_OK = False
+            return None, GROQ_LAST_ERROR
+        GROQ_LAST_ERROR = ""
+        GROQ_CALL_OK = True
+        return text.strip(), None
+    except Exception as exc:
+        GROQ_LAST_ERROR = _groq_error_message(exc)
+        GROQ_CALL_OK = False
+        return None, GROQ_LAST_ERROR
+
+
+def test_groq_connection() -> tuple[bool, str]:
+    """Tes request minimal; dipanggil hanya ketika pengguna menekan tombol tes."""
+    if MODEL_AI is None:
+        return False, GROQ_INIT_ERROR or "Groq belum terhubung."
+    global GROQ_CALL_OK
+    try:
+        models = MODEL_AI.models.list()
+        ids = {getattr(m, "id", "") for m in getattr(models, "data", [])}
+        if GROQ_MODEL_NAME not in ids:
+            GROQ_CALL_OK = False
+            return False, f"Koneksi Groq berhasil, tetapi model '{GROQ_MODEL_NAME}' tidak muncul pada daftar model yang tersedia untuk key ini."
+        GROQ_CALL_OK = True
+        return True, f"Koneksi Groq OK. Model '{GROQ_MODEL_NAME}' tersedia."
+    except Exception as exc:
+        GROQ_CALL_OK = False
+        return False, _groq_error_message(exc)
 
 
 # ------------------------------------------------------------
@@ -828,8 +932,8 @@ def save_exam(user_id: str, exam: dict, detections: list[dict]) -> str:
             exam.get("r_relieving", "-"), exam.get("t_timing", "-"), int(exam.get("s_severity", 0) or 0),
             exam.get("bp_systolic"), exam.get("bp_diastolic"), exam.get("pulse_rate"), exam.get("resp_rate"),
             exam.get("weight_kg"), exam.get("height_cm"), exam.get("bmi"),
-            exam.get("ai_provider", "groq" if MODEL_AI else "fallback"),
-            exam.get("ai_model", GROQ_MODEL_NAME if MODEL_AI else ""),
+            exam.get("ai_provider", "groq" if GROQ_CALL_OK else "fallback"),
+            exam.get("ai_model", GROQ_MODEL_NAME if GROQ_CALL_OK else ""),
             exam.get("ai_pipeline_version", AI_PIPELINE_VERSION),
             exam.get("knowledge_version", KNOWLEDGE_VERSION),
             exam.get("agent1_json", ""), exam.get("agent2_json", ""),
@@ -1146,19 +1250,16 @@ def agent1_anamnesis(anam: dict) -> str:
 
     Jawab dengan alasan singkat, padat, dan profesional (1 paragraf).
     """
-    try:
-        response = MODEL_AI.chat.completions.create(
-            model=GROQ_MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "Anda adalah KECERDASAN 1 (Ahli Analisis Anamnesis) untuk sistem skrining kedokteran gigi."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            max_tokens=700,
-        )
-        return response.choices[0].message.content or "Gagal merumuskan suspek."
-    except Exception as e:
-        return f"Error Kecerdasan 1: {str(e)}"
+    text, error = groq_chat(
+        [
+            {"role": "system", "content": "Anda adalah KECERDASAN 1 (Ahli Analisis Anamnesis) untuk sistem skrining kedokteran gigi."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=700,
+    )
+    if text:
+        return text
+    return f"Kecerdasan 1 tidak tersedia: {error}. Sistem melanjutkan dengan alur fallback."
 
 
 def agent2_sync(agent1_text: str, detections: list[dict]) -> str:
@@ -1188,20 +1289,16 @@ def agent2_sync(agent1_text: str, detections: list[dict]) -> str:
     2. Berikan SINTESIS KLINIS AKHIR (1-2 paragraf profesional berbahasa Indonesia).
     3. Bedakan antara probabilitas diagnosis dan angka keyakinan objek YOLO.
     """
-    try:
-        response = MODEL_AI.chat.completions.create(
-            model=GROQ_MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "Anda adalah KECERDASAN 2 (Ahli Sinkronisasi Klinis). Jangan menyatakan diagnosis definitif, sebutkan sebagai kemungkinan. Jika data kurang, sarankan pemeriksaan klinis."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            max_tokens=700,
-        )
-        text = response.choices[0].message.content
-        return text.replace('\n', '<br>') if text else "Gagal sinkronisasi."
-    except Exception as e:
-        return f"Error Kecerdasan 2: {str(e)}"
+    text, error = groq_chat(
+        [
+            {"role": "system", "content": "Anda adalah KECERDASAN 2 (Ahli Sinkronisasi Klinis). Jangan menyatakan diagnosis definitif, sebutkan sebagai kemungkinan. Jika data kurang, sarankan pemeriksaan klinis."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=700,
+    )
+    if text:
+        return text.replace('\n', '<br>')
+    return f"Kecerdasan 2 tidak tersedia: {error}. Sistem menggunakan fallback berbasis aturan."
 
 
 # ============================================================
@@ -1939,6 +2036,8 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
             # --- 2. Eksekusi Kecerdasan 2 (Sinkronisasi Suspek 1 + Temuan YOLO) ---
             bar.progress((i - 0.2) / len(processed), text=f"Kecerdasan 2: Mensinkronisasi Suspek dengan Gambar...")
             hasil_agen2 = agent2_sync(hasil_agen1, dets) if not demo else fallback_synthesize(dets, anam)
+            if not demo and not GROQ_CALL_OK:
+                hasil_agen2 = fallback_synthesize(dets, anam)
 
             exam_id = uuid.uuid4().hex
             labels = [d["label"] for d in dets]
@@ -2549,10 +2648,22 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
     with t_model:
         with st.container(border=True):
             st.markdown("### Status runtime")
+            groq_status = "client siap" if MODEL_AI else "belum siap"
+            if GROQ_INIT_ERROR:
+                st.caption(f"Status Groq: {groq_status} — {GROQ_INIT_ERROR}")
+            if st.button("Tes koneksi Groq", key="test_groq_connection", use_container_width=True):
+                with st.spinner("Menguji koneksi dan akses model Groq…"):
+                    ok, msg = test_groq_connection()
+                (st.success if ok else st.error)(msg)
+            if GROQ_LAST_ERROR:
+                st.caption(f"Error Groq terakhir: {GROQ_LAST_ERROR}")
             rows = [
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
-                ("Groq AI API", "terhubung" if MODEL_AI else "belum terhubung"),
-                ("Model AI", GROQ_MODEL_NAME if MODEL_AI else "—"),
+                ("Groq SDK", "terpasang" if Groq else "belum terpasang"),
+                ("GROQ_API_KEY", "terbaca" if GROQ_API_KEY else "tidak ditemukan"),
+                ("Groq client", "siap" if MODEL_AI else "belum siap"),
+                ("Groq request terakhir", "berhasil" if GROQ_CALL_OK else "belum berhasil"),
+                ("Model AI", GROQ_MODEL_NAME),
                 ("Arsitektur aktif", st.session_state.model_version),
                 ("Berkas bobot", weights.name if weights else "tidak ditemukan"),
                 ("Ambang keyakinan", f"{st.session_state.conf_thr:.2f}"),
