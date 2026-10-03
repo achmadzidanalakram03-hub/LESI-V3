@@ -9,7 +9,7 @@ Fitur utama:
   • Penyimpanan permanen: SQLite relasional + arsip citra per akun di disk
   • Rekam medis pasien (bukan sekadar log gambar): pasien ? pemeriksaan ? deteksi
   • Anamnesis OLD CARTS + tanda-tanda vital (TD, nadi, napas, BB/TB, IMT otomatis)
-  • Sintesis Klinis Berbasis LLM (Google Gemini) untuk suspek diagnosis
+  • Sintesis Klinis Berbasis LLM (Groq AI) untuk suspek diagnosis
   • Analitik, laporan cetak, ekspor penuh (ZIP), dan mode demo tanpa bobot model
 
 Jalankan:  streamlit run app.py
@@ -46,32 +46,28 @@ try:
 except Exception:  # pragma: no cover
     YOLO = None
 
-# Google GenAI SDK baru. `google-generativeai` adalah SDK lama; proyek ini
-# memakai `google-genai` agar selaras dengan requirements.txt dan API resmi saat ini.
+# Menggunakan SDK Groq
 try:
-    from google import genai
-    from google.genai import types as genai_types
+    from groq import Groq
 
     api_key = None
-    if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
-        api_key = str(st.secrets["GEMINI_API_KEY"]).strip()
-    elif "GEMINI_API_KEY" in os.environ:
-        api_key = os.environ["GEMINI_API_KEY"].strip()
+    if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+        api_key = str(st.secrets["GROQ_API_KEY"]).strip()
+    elif "GROQ_API_KEY" in os.environ:
+        api_key = os.environ["GROQ_API_KEY"].strip()
 
-    # Model dibuat configurable agar MAMMOUTH tidak terkunci pada satu nama model.
-    # Ubah GEMINI_MODEL melalui Streamlit secrets/environment bila diperlukan.
-    GEMINI_MODEL_NAME = str(
-        st.secrets.get("GEMINI_MODEL", os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"))
+    # Model default disetel ke llama-3.3-70b-versatile (cepat dan cerdas)
+    GROQ_MODEL_NAME = str(
+        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
     ).strip() if hasattr(st, "secrets") else str(
-        os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
     ).strip()
 
-    MODEL_AI = genai.Client(api_key=api_key) if api_key else None
+    MODEL_AI = Groq(api_key=api_key) if api_key else None
 except Exception:
-    genai = None
-    genai_types = None
+    Groq = None
     MODEL_AI = None
-    GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+    GROQ_MODEL_NAME = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 # ------------------------------------------------------------
@@ -851,8 +847,8 @@ def save_exam(user_id: str, exam: dict, detections: list[dict]) -> str:
             exam.get("r_relieving", "-"), exam.get("t_timing", "-"), int(exam.get("s_severity", 0) or 0),
             exam.get("bp_systolic"), exam.get("bp_diastolic"), exam.get("pulse_rate"), exam.get("resp_rate"),
             exam.get("weight_kg"), exam.get("height_cm"), exam.get("bmi"),
-            exam.get("ai_provider", "gemini" if MODEL_AI else "fallback"),
-            exam.get("ai_model", GEMINI_MODEL_NAME if MODEL_AI else ""),
+            exam.get("ai_provider", "groq" if MODEL_AI else "fallback"),
+            exam.get("ai_model", GROQ_MODEL_NAME if MODEL_AI else ""),
             exam.get("ai_pipeline_version", AI_PIPELINE_VERSION),
             exam.get("knowledge_version", KNOWLEDGE_VERSION),
             exam.get("agent1_json", ""), exam.get("agent2_json", ""),
@@ -1033,7 +1029,7 @@ def migrate_legacy() -> Optional[str]:
 
 
 # ============================================================
-# 4. MESIN AI & SINTESIS KLINIS (Diperbarui dengan Gemini API)
+# 4. MESIN AI & SINTESIS KLINIS (Diperbarui dengan Groq API)
 # ============================================================
 def find_weights(version: str) -> Optional[Path]:
     for cand in MODEL_FILES.get(version, ["best.pt"]):
@@ -1096,77 +1092,8 @@ def urgency_of(labels: list[str], severity: int = 0) -> str:
     return RANK_URGENCY.get(rank, "Rendah") if rank else "Rendah"
 
 
-def synthesize(detections: list[dict], anam: dict) -> str:
-    """Menggabungkan temuan visual dengan anamnesis klinis untuk mendapatkan suspek diagnosis menggunakan LLM."""
-    
-    if MODEL_AI is None:
-        # Fallback jika API Key tidak ada atau limit tercapai, gunakan logika berbasis aturan lama.
-        return fallback_synthesize(detections, anam)
-        
-    sev = int(anam.get("s_severity", 0) or 0)
-    
-    # Menyiapkan payload untuk prompt
-    anam_payload = f"""
-    - Onset: {anam.get("o_onset", "-")}
-    - Lokasi: {anam.get("l_location", "-")}
-    - Durasi: {anam.get("d_duration", "-")}
-    - Karakteristik: {anam.get("c_character", "-")}
-    - Memperberat: {anam.get("a_aggravating", "-")}
-    - Meredakan: {anam.get("r_relieving", "-")}
-    - Skala Nyeri (VAS): {sev}/10
-    """
-    
-    if not detections:
-        distribusi = "Tidak ada lesi yang terdeteksi secara visual pada citra ini."
-    else:
-        distribusi_list = []
-        for i, d in enumerate(detections):
-            distribusi_list.append(
-                f"Lesi {i+1}: Jenis '{d['label']}' (Keyakinan: {d['confidence']*100:.1f}%) pada rentang koordinat piksel x:[{d['x1']:.1f}-{d['x2']:.1f}], y:[{d['y1']:.1f}-{d['y2']:.1f}]"
-            )
-        distribusi = "\n".join(distribusi_list)
-        
-    prompt = f"""
-    Anda adalah asisten AI klinis untuk sistem skrining kedokteran gigi (MAMMOUTH).
-    Berikan sintesis klinis dan suspek diagnosis berdasarkan korelasi dua set data berikut.
-    
-    DATA ANAMNESIS (OLD CARTS):
-    {anam_payload}
-    
-    HASIL DETEKSI VISUAL (Distribusi Gambar dari YOLO):
-    {distribusi}
-    
-    INSTRUKSI KETAT:
-    1. Berikan 1-2 kemungkinan suspek diagnosis.
-    2. Jelaskan alasannya dengan mengkorelasikan gejala dari anamnesis dengan lokasi dan jenis distribusi lesi pada gambar.
-    3. JANGAN PERNAH menyertakan atau membahas prevalensi statistik penyakit. Fokus HANYA pada data klinis dan distribusi gambar pasien ini.
-    4. Tulis dalam 1-2 paragraf singkat dan profesional berbahasa Indonesia.
-    """
-    
-    try:
-        response = MODEL_AI.models.generate_content(
-            model=GEMINI_MODEL_NAME,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=700,
-                system_instruction=(
-                    "Anda adalah asisten decision-support kedokteran gigi. "
-                    "Jangan menyatakan diagnosis definitif. Bedakan confidence YOLO "
-                    "dari probabilitas diagnosis klinis. Jika data tidak cukup, nyatakan "
-                    "keterbatasan dan sarankan pemeriksaan klinis langsung."
-                ),
-            ),
-        )
-        if response and getattr(response, "text", None):
-            return response.text.replace('\n', '<br>')
-        return fallback_synthesize(detections, anam)
-    except Exception as e:
-        return f"Sintesis AI gagal (Error: {str(e)}). Menggunakan fallback statis: {fallback_synthesize(detections, anam)}"
-
-
 def fallback_synthesize(detections: list[dict], anam: dict) -> str:
-    """Logika sintesis statis warisan (dipakai sebagai cadangan jika API Google Gemini gagal)."""
+    """Logika sintesis statis warisan (dipakai sebagai cadangan jika API AI gagal)."""
     sev = int(anam.get("s_severity", 0) or 0)
     char = str(anam.get("c_character", "")).lower()
     onset = str(anam.get("o_onset", "")).lower()
@@ -1216,6 +1143,86 @@ def fallback_synthesize(detections: list[dict], anam: dict) -> str:
             lines.append(f"{nama} ({conf_txt}) — {info.get('tatalaksana', 'observasi klinis').split('.')[0]}.")
 
     return " ".join(f"{i}. {t}" for i, t in enumerate(lines, 1))
+
+def agent1_anamnesis(anam: dict) -> str:
+    """Kecerdasan 1: Mensintesis suspek diagnosis murni dari data Anamnesis (OLD CARTS)."""
+    if MODEL_AI is None:
+        return "Kecerdasan 1 tidak aktif (Groq API Key tidak tersedia)."
+    
+    sev = int(anam.get("s_severity", 0) or 0)
+    anam_payload = f"""
+    - Onset: {anam.get("o_onset", "-")}
+    - Lokasi: {anam.get("l_location", "-")}
+    - Durasi: {anam.get("d_duration", "-")}
+    - Karakteristik: {anam.get("c_character", "-")}
+    - Memperberat: {anam.get("a_aggravating", "-")}
+    - Meredakan: {anam.get("r_relieving", "-")}
+    - Skala Nyeri (VAS): {sev}/10
+    """
+    prompt = f"""
+    Tugas Anda HANYA menganalisis keluhan pasien berikut tanpa melihat gambar klinis, 
+    lalu berikan 1-2 suspek diagnosis awal berdasarkan gejala tersebut.
+
+    DATA ANAMNESIS:
+    {anam_payload}
+
+    Jawab dengan alasan singkat, padat, dan profesional (1 paragraf).
+    """
+    try:
+        response = MODEL_AI.chat.completions.create(
+            model=GROQ_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Anda adalah KECERDASAN 1 (Ahli Analisis Anamnesis) untuk sistem skrining kedokteran gigi."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=700,
+        )
+        return response.choices[0].message.content or "Gagal merumuskan suspek."
+    except Exception as e:
+        return f"Error Kecerdasan 1: {str(e)}"
+
+def agent2_sync(agent1_text: str, detections: list[dict]) -> str:
+    """Kecerdasan 2: Mensinkronisasi suspek dari Kecerdasan 1 dengan deteksi visual YOLO."""
+    if MODEL_AI is None:
+        return "Kecerdasan 2 tidak aktif."
+    
+    if not detections:
+        distribusi = "Tidak ada lesi terdeteksi secara visual pada gambar ini."
+    else:
+        distribusi = "\n".join(
+            f"- Lesi {d['label']} (Keyakinan: {d['confidence']*100:.1f}%)"
+            for d in detections
+        )
+        
+    prompt = f"""
+    Anda menerima Suspek Diagnosis Awal dari Kecerdasan 1 (berbasis anamnesis) dan Hasil Deteksi dari model YOLO (berbasis foto).
+
+    SUSPEK AWAL KECERDASAN 1:
+    {agent1_text}
+
+    HASIL DETEKSI VISUAL (YOLO):
+    {distribusi}
+
+    Tugas Anda:
+    1. Sinkronkan apakah hasil visual YOLO mengonfirmasi, membantah, atau menambah informasi dari suspek awal Kecerdasan 1.
+    2. Berikan SINTESIS KLINIS AKHIR (1-2 paragraf profesional berbahasa Indonesia).
+    3. Bedakan antara probabilitas diagnosis dan angka keyakinan objek YOLO.
+    """
+    try:
+        response = MODEL_AI.chat.completions.create(
+            model=GROQ_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Anda adalah KECERDASAN 2 (Ahli Sinkronisasi Klinis). Jangan menyatakan diagnosis definitif, sebutkan sebagai kemungkinan. Jika data kurang, sarankan pemeriksaan klinis."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=700,
+        )
+        text = response.choices[0].message.content
+        return text.replace('\n', '<br>') if text else "Gagal sinkronisasi."
+    except Exception as e:
+        return f"Error Kecerdasan 2: {str(e)}"
 
 
 # ============================================================
@@ -1447,7 +1454,7 @@ def build_export_zip(user_id: str, include_images: bool = True) -> bytes:
 # ============================================================
 st.set_page_config(
     page_title=f"{APP_NAME} — {APP_TAGLINE}",
-    page_icon="??",
+    page_icon="🦷",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1771,9 +1778,9 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
         st.warning("Mode demo aktif. Kotak deteksi disimulasikan dan ditandai di rekam medis — jangan dipakai klinis.")
 
     if MODEL_AI is None:
-        st.warning("Gemini belum terhubung. Sintesis klinis menggunakan fallback berbasis aturan; hasil ini bukan diagnosis.")
+        st.warning("Groq API belum terhubung. Sintesis klinis menggunakan fallback berbasis aturan; hasil ini bukan diagnosis.")
     else:
-        st.caption(f"Clinical synthesis: Google GenAI · {GEMINI_MODEL_NAME}")
+        st.caption(f"Clinical synthesis: Groq AI · {GROQ_MODEL_NAME}")
 
     pats = list_patients(user["id"])
     opts = {"— Tanpa identitas pasien —": None}
@@ -1949,9 +1956,13 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
         anam = st.session_state.anamnesis
         vit = st.session_state.vitals
         results_view = []
-        bar = st.progress(0.0, text="Menyiapkan…")
+        
+        # --- 1. Eksekusi Kecerdasan 1 (Anamnesis Saja) ---
+        bar = st.progress(0.0, text="Kecerdasan 1: Menganalisis Suspek Anamnesis...")
+        hasil_agen1 = agent1_anamnesis(anam) if not demo else "Mode Demo: Suspek Anamnesis disimulasikan."
+        
         for i, (img, fname) in enumerate(zip(processed, names), start=1):
-            bar.progress((i - 1) / len(processed), text=f"Menganalisis {fname} & Sintesis AI")
+            bar.progress((i - 0.5) / len(processed), text=f"Kecerdasan YOLO: Mendeteksi Lesi pada {fname}...")
             try:
                 if demo:
                     dets, annotated = run_demo_inference(img, st.session_state.conf_thr)
@@ -1960,6 +1971,10 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
             except Exception as exc:  # noqa: BLE001
                 st.error(f"{fname} gagal diproses: {exc}")
                 continue
+
+            # --- 2. Eksekusi Kecerdasan 2 (Sinkronisasi Suspek 1 + Temuan YOLO) ---
+            bar.progress((i - 0.2) / len(processed), text=f"Kecerdasan 2: Mensinkronisasi Suspek dengan Gambar...")
+            hasil_agen2 = agent2_sync(hasil_agen1, dets) if not demo else fallback_synthesize(dets, anam)
 
             exam_id = uuid.uuid4().hex
             labels = [d["label"] for d in dets]
@@ -1975,13 +1990,13 @@ def page_screening(user: dict, model, weights: Optional[Path]) -> None:
                 "annot_path": store_image(user["id"], exam_id, annotated, "anotasi"),
                 "max_conf": max([d["confidence"] for d in dets], default=0.0),
                 "urgency": urgency_of(labels, int(anam.get("s_severity", 0) or 0)),
-                "synthesis": synthesize(dets, anam),
-                "ai_provider": "google-genai" if MODEL_AI else "fallback",
-                "ai_model": GEMINI_MODEL_NAME if MODEL_AI else "",
+                "synthesis": hasil_agen2,  # <-- Tampilan akhir ke pengguna diisi oleh Kecerdasan 2
+                "ai_provider": "groq" if MODEL_AI else "fallback",
+                "ai_model": GROQ_MODEL_NAME if MODEL_AI else "",
                 "ai_pipeline_version": AI_PIPELINE_VERSION,
                 "knowledge_version": KNOWLEDGE_VERSION,
-                "agent1_json": "",
-                "agent2_json": "",
+                "agent1_json": hasil_agen1,  # <-- Menyimpan rekam pemikiran Kecerdasan 1 secara permanen ke Database
+                "agent2_json": hasil_agen2,  # <-- Menyimpan hasil sinkronisasi Kecerdasan 2 secara permanen ke Database
                 "clinician_note": note.strip(),
                 "is_demo": 1 if demo else 0,
                 **anam,
@@ -2634,8 +2649,8 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
             st.markdown("### Status runtime")
             rows = [
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
-                ("Google GenAI API", "terhubung" if MODEL_AI else "belum terhubung"),
-                ("Model AI", GEMINI_MODEL_NAME if MODEL_AI else "—"),
+                ("Groq AI API", "terhubung" if MODEL_AI else "belum terhubung"),
+                ("Model AI", GROQ_MODEL_NAME if MODEL_AI else "—"),
                 ("Arsitektur aktif", st.session_state.model_version),
                 ("Berkas bobot", weights.name if weights else "tidak ditemukan"),
                 ("Ambang keyakinan", f"{st.session_state.conf_thr:.2f}"),
@@ -2745,7 +2760,7 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
             st.markdown(
                 "- Antarmuka: Streamlit\n"
                 "- Deteksi objek: Ultralytics YOLO (v8/v11/v12)\n"
-                "- Sintesis Klinis: Google Gemini AI\n"
+                "- Sintesis Klinis: Groq AI (Dual Agent)\n"
                 "- Penyimpanan: SQLite relasional dan arsip citra per akun\n"
                 "- Keamanan kata sandi: PBKDF2-HMAC-SHA256, 200.000 iterasi, salt per akun"
             )
