@@ -79,6 +79,11 @@ MODEL_AI = None
 GROQ_INIT_ERROR = ""
 GROQ_LAST_ERROR = ""
 GROQ_CALL_OK = False
+GROQ_DIAGNOSTIC = {
+    "status": "Belum dites",
+    "message": "Klik tombol Tes koneksi Groq.",
+    "model_available": None,
+}
 
 if Groq is not None and GROQ_API_KEY:
     try:
@@ -157,21 +162,52 @@ def groq_chat(messages: list[dict], max_tokens: int = 700) -> tuple[Optional[str
 
 
 def test_groq_connection() -> tuple[bool, str]:
-    """Tes request minimal; dipanggil hanya ketika pengguna menekan tombol tes."""
+    """Tes akses API Groq dan ketersediaan model. Tidak menjalankan completion."""
+    global GROQ_CALL_OK, GROQ_DIAGNOSTIC
+
     if MODEL_AI is None:
-        return False, GROQ_INIT_ERROR or "Groq belum terhubung."
-    global GROQ_CALL_OK
+        GROQ_CALL_OK = False
+        GROQ_DIAGNOSTIC = {
+            "status": "CLIENT GAGAL",
+            "message": GROQ_INIT_ERROR or "Groq belum terhubung.",
+            "model_available": None,
+        }
+        return False, GROQ_DIAGNOSTIC["message"]
+
     try:
         models = MODEL_AI.models.list()
         ids = {getattr(m, "id", "") for m in getattr(models, "data", [])}
-        if GROQ_MODEL_NAME not in ids:
+        model_available = GROQ_MODEL_NAME in ids
+
+        if not model_available:
             GROQ_CALL_OK = False
-            return False, f"Koneksi Groq berhasil, tetapi model '{GROQ_MODEL_NAME}' tidak muncul pada daftar model yang tersedia untuk key ini."
+            GROQ_DIAGNOSTIC = {
+                "status": "API OK, MODEL TIDAK TERSEDIA",
+                "message": (
+                    f"Groq dapat dihubungi, tetapi model '{GROQ_MODEL_NAME}' "
+                    "tidak muncul pada daftar model yang tersedia untuk API key ini."
+                ),
+                "model_available": False,
+            }
+            return False, GROQ_DIAGNOSTIC["message"]
+
         GROQ_CALL_OK = True
-        return True, f"Koneksi Groq OK. Model '{GROQ_MODEL_NAME}' tersedia."
+        GROQ_DIAGNOSTIC = {
+            "status": "BERHASIL",
+            "message": f"Groq dapat dihubungi dan model '{GROQ_MODEL_NAME}' tersedia.",
+            "model_available": True,
+        }
+        return True, GROQ_DIAGNOSTIC["message"]
+
     except Exception as exc:
         GROQ_CALL_OK = False
-        return False, _groq_error_message(exc)
+        message = _groq_error_message(exc)
+        GROQ_DIAGNOSTIC = {
+            "status": "KONEKSI GAGAL",
+            "message": message,
+            "model_available": None,
+        }
+        return False, message
 
 
 # ------------------------------------------------------------
@@ -2647,31 +2683,68 @@ def page_settings(user: dict, weights: Optional[Path]) -> None:
 
     with t_model:
         with st.container(border=True):
-            st.markdown("### Status runtime")
-            groq_status = "client siap" if MODEL_AI else "belum siap"
-            if GROQ_INIT_ERROR:
-                st.caption(f"Status Groq: {groq_status} — {GROQ_INIT_ERROR}")
-            if st.button("Tes koneksi Groq", key="test_groq_connection", use_container_width=True):
-                with st.spinner("Menguji koneksi dan akses model Groq…"):
+            st.markdown("### Status koneksi Groq")
+            st.caption(
+                "Anda tidak perlu mengubah model. Tekan tombol di bawah; MAMMOUTH hanya memeriksa "
+                "apakah deployment Streamlit dapat mengakses Groq dan apakah model yang dipilih tersedia."
+            )
+
+            if st.button("Tes koneksi Groq", key="test_groq_connection", use_container_width=True, type="primary"):
+                with st.spinner("Memeriksa akses Groq…"):
                     ok, msg = test_groq_connection()
-                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.success("✓ " + msg)
+                else:
+                    st.error("✗ " + msg)
+
+            diagnostic_rows = [
+                ("🔑 API Key", "OK — terbaca" if GROQ_API_KEY else "GAGAL — tidak ditemukan"),
+                ("📦 Groq SDK", "OK — terpasang" if Groq else "GAGAL — belum terpasang"),
+                ("🔌 Groq client", "OK — siap" if MODEL_AI else "GAGAL — belum siap"),
+                ("🌐 Koneksi API Groq", GROQ_DIAGNOSTIC.get("status", "Belum dites")),
+                ("🤖 Model AI", GROQ_MODEL_NAME),
+            ]
+            st.markdown(
+                "".join(
+                    f"<div class='det-row'><span class='det-sub'>{k}</span>"
+                    f"<span class='det-name'>{v}</span></div>"
+                    for k, v in diagnostic_rows
+                ),
+                unsafe_allow_html=True,
+            )
+
+            if GROQ_DIAGNOSTIC.get("status") == "KONEKSI GAGAL":
+                st.info(
+                    "Artinya: API key sudah terbaca, tetapi request dari Streamlit Cloud ke Groq ditolak/gagal. "
+                    "Jangan ganti model dulu. YOLO dan fallback MAMMOUTH tetap dapat digunakan."
+                )
+            elif GROQ_DIAGNOSTIC.get("status") == "API OK, MODEL TIDAK TERSEDIA":
+                st.warning(
+                    "Groq dapat dihubungi, tetapi model yang dipilih tidak tersedia untuk API key ini. "
+                    "Ini baru kondisi yang memerlukan pemeriksaan model/permission."
+                )
+
+            if GROQ_INIT_ERROR:
+                st.caption(f"Info inisialisasi: {GROQ_INIT_ERROR}")
             if GROQ_LAST_ERROR:
                 st.caption(f"Error Groq terakhir: {GROQ_LAST_ERROR}")
-            rows = [
+
+            st.markdown("### Status model lokal")
+            local_rows = [
                 ("Paket ultralytics", "terpasang" if YOLO else "belum terpasang"),
-                ("Groq SDK", "terpasang" if Groq else "belum terpasang"),
-                ("GROQ_API_KEY", "terbaca" if GROQ_API_KEY else "tidak ditemukan"),
-                ("Groq client", "siap" if MODEL_AI else "belum siap"),
-                ("Groq request terakhir", "berhasil" if GROQ_CALL_OK else "belum berhasil"),
-                ("Model AI", GROQ_MODEL_NAME),
                 ("Arsitektur aktif", st.session_state.model_version),
                 ("Berkas bobot", weights.name if weights else "tidak ditemukan"),
                 ("Ambang keyakinan", f"{st.session_state.conf_thr:.2f}"),
                 ("Ambang IoU", f"{st.session_state.iou_thr:.2f}"),
             ]
-            st.markdown("".join(
-                f"<div class='det-row'><span class='det-sub'>{k}</span><span class='det-name'>{v}</span></div>"
-                for k, v in rows), unsafe_allow_html=True)
+            st.markdown(
+                "".join(
+                    f"<div class='det-row'><span class='det-sub'>{k}</span>"
+                    f"<span class='det-name'>{v}</span></div>"
+                    for k, v in local_rows
+                ),
+                unsafe_allow_html=True,
+            )
 
         with st.container(border=True):
             st.markdown("### Mode demo")
