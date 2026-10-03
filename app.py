@@ -56,12 +56,15 @@ try:
     elif "GROQ_API_KEY" in os.environ:
         api_key = os.environ["GROQ_API_KEY"].strip()
 
-    # Model default disetel ke llama-3.3-70b-versatile (cepat dan cerdas)
-    GROQ_MODEL_NAME = str(
-        st.secrets.get("GROQ_MODEL", os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
-    ).strip() if hasattr(st, "secrets") else str(
-        os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    ).strip()
+    # Model default Groq
+GROQ_MODEL_NAME = str(
+    st.secrets.get(
+        "GROQ_MODEL",
+        os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    )
+).strip() if hasattr(st, "secrets") else str(
+    os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+).strip()
 
     MODEL_AI = Groq(api_key=api_key) if api_key else None
 except Exception:
